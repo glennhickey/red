@@ -1,7 +1,13 @@
-# CXX = /usr/bin/c++
-CXX = /usr/bin/g++
+# C++ compiler.
+ifndef CXX
+  ifeq ($(SYS),Darwin) #This is to deal with the Mavericks replacing gcc with clang fully
+    CXX = clang++
+  else
+    CXX = g++
+  endif
+endif
 
-CXXFLAGS =	-O3 -g -fmessage-length=0 -Wall 
+CXXFLAGS += -O3 -g -fmessage-length=0
 
 #
 # Objects
@@ -50,7 +56,7 @@ TRed = ../bin/Red
 #
 
 $(TRed): $(OBJS)
-	$(CXX) -o $(TRed) $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $(TRed) $(OBJS)
 
 #
 # RepeatsDetector
@@ -64,10 +70,10 @@ $(ORed): RepeatsDetector.cpp nonltr/KmerHashTable.h nonltr/KmerHashTable.cpp non
 #
 $(OInvalidInputException): exception/InvalidInputException.cpp exception/InvalidInputException.h
 	$(CXX) $(CXXFLAGS) -c exception/InvalidInputException.cpp -o $(OInvalidInputException)
-	
+
 $(OInvalidStateException): exception/InvalidStateException.cpp exception/InvalidStateException.h
 	$(CXX) $(CXXFLAGS) -c exception/InvalidStateException.cpp -o $(OInvalidStateException)	
-	
+
 $(OFileDoesNotExistException): exception/FileDoesNotExistException.cpp exception/FileDoesNotExistException.h
 	$(CXX) $(CXXFLAGS) -c exception/FileDoesNotExistException.cpp -o $(OFileDoesNotExistException)
 
@@ -86,50 +92,50 @@ $(OInvalidOperationException): exception/InvalidOperationException.cpp exception
 
 $(OUtil): utility/Util.cpp utility/Util.h utility/Location.h exception/FileDoesNotExistException.h 
 	$(CXX) $(CXXFLAGS) -c utility/Util.cpp -o $(OUtil)
-	
+
 $(OLocation): utility/Location.cpp utility/Location.h utility/ILocation.h exception/InvalidInputException.h utility/Util.h 
 	$(CXX) $(CXXFLAGS) -c utility/Location.cpp -o $(OLocation)
-	
+
 $(OEmptyLocation): utility/EmptyLocation.cpp utility/EmptyLocation.h utility/ILocation.h exception/InvalidOperationException.h
 	$(CXX) $(CXXFLAGS) -c utility/EmptyLocation.cpp -o $(OEmptyLocation)	
-			
+
 #
 # Non LTR
 #
 
 $(OChromosome): nonltr/Chromosome.cpp nonltr/Chromosome.h nonltr/IChromosome.h utility/Util.h exception/InvalidInputException.h exception/InvalidOperationException.h
 	$(CXX) $(CXXFLAGS) -c nonltr/Chromosome.cpp -o $(OChromosome)
-	
+
 $(OChromosomeOneDigit): nonltr/ChromosomeOneDigit.cpp nonltr/ChromosomeOneDigit.h nonltr/Chromosome.h exception/InvalidInputException.h
 	$(CXX) $(CXXFLAGS) -c nonltr/ChromosomeOneDigit.cpp	-o $(OChromosomeOneDigit)
-	
+
 $(OChromosomeRandom): nonltr/ChromosomeRandom.cpp nonltr/ChromosomeRandom.h nonltr/IChromosome.h exception/InvalidInputException.h exception/InvalidStateException.h utility/Util.h
 	$(CXX) $(CXXFLAGS) -c nonltr/ChromosomeRandom.cpp -o $(OChromosomeRandom)
-	
+
 $(OTableBuilder): nonltr/TableBuilder.cpp nonltr/TableBuilder.h utility/Util.h nonltr/ChromosomeOneDigit.h nonltr/ITableView.h nonltr/KmerHashTable.h nonltr/KmerHashTable.cpp nonltr/EnrichmentMarkovView.h nonltr/EnrichmentMarkovView.cpp exception/InvalidStateException.h nonltr/ChromListMaker.h nonltr/IChromosome.h
 	$(CXX) $(CXXFLAGS) -c nonltr/TableBuilder.cpp -o $(OTableBuilder)
-	
+
 $(OScorer): nonltr/Scorer.cpp nonltr/Scorer.h nonltr/ChromosomeOneDigit.h utility/Util.h exception/InvalidStateException.h
 	$(CXX) $(CXXFLAGS) -c nonltr/Scorer.cpp -o $(OScorer)
-		
+
 $(ODetectorMaxima): nonltr/DetectorMaxima.cpp nonltr/DetectorMaxima.h utility/ILocation.h exception/InvalidStateException.h
 	$(CXX) $(CXXFLAGS) -c nonltr/DetectorMaxima.cpp -o $(ODetectorMaxima)
 
 $(OChromDetectorMaxima): nonltr/ChromDetectorMaxima.cpp nonltr/ChromDetectorMaxima.h nonltr/DetectorMaxima.h nonltr/ChromosomeOneDigit.h utility/Util.h utility/ILocation.h utility/Location.h
 	$(CXX) $(CXXFLAGS) -c nonltr/ChromDetectorMaxima.cpp -o $(OChromDetectorMaxima)	
-	
+
 $(OHMM): nonltr/HMM.cpp nonltr/HMM.h utility/ILocation.h exception/InvalidStateException.h exception/InvalidInputException.h exception/FileDoesNotExistException.h exception/InvalidOperationException.h
 	$(CXX) $(CXXFLAGS) -c nonltr/HMM.cpp -o $(OHMM)
-	
+
 $(OScanner): nonltr/Scanner.cpp nonltr/Scanner.h nonltr/Chromosome.h nonltr/ChromosomeOneDigit.h nonltr/HMM.h nonltr/ITableView.h nonltr/Scorer.h utility/Util.h utility/ILocation.h exception/InvalidInputException.h exception/InvalidStateException.h exception/FileDoesNotExistException.h exception/InvalidOperationException.h	
 	$(CXX) $(CXXFLAGS) -c nonltr/Scanner.cpp -o $(OScanner)
-	
+
 $(OTrainer): nonltr/Trainer.cpp nonltr/Trainer.h nonltr/TableBuilder.h nonltr/KmerHashTable.h nonltr/KmerHashTable.cpp nonltr/HMM.h nonltr/ChromDetectorMaxima.h nonltr/Scorer.h nonltr/ChromListMaker.h utility/Util.h nonltr/LocationListCollection.h
 	$(CXX) $(CXXFLAGS) -c nonltr/Trainer.cpp -o $(OTrainer)
-	
+
 $(OChromListMaker): nonltr/ChromListMaker.cpp nonltr/ChromListMaker.h nonltr/Chromosome.h nonltr/ChromosomeOneDigit.h utility/Util.h
 	$(CXX) $(CXXFLAGS) -c nonltr/ChromListMaker.cpp -o $(OChromListMaker) 
-	
+
 $(OCluster): nonltr/Cluster.cpp nonltr/Cluster.h utility/Util.h exception/InvalidStateException.h exception/InvalidInputException.h
 	$(CXX) $(CXXFLAGS) -c nonltr/Cluster.cpp -o $(OCluster)
 
@@ -138,7 +144,7 @@ $(OLocationList): nonltr/LocationList.cpp nonltr/LocationList.h utility/ILocatio
 
 $(OLocationListCollection): nonltr/LocationListCollection.cpp nonltr/LocationListCollection.h utility/Location.h exception/InvalidStateException.h
 	$(CXX) $(CXXFLAGS) -c nonltr/LocationListCollection.cpp -o $(OLocationListCollection)
-	
+
 
 #
 # Make binary directories
@@ -151,10 +157,10 @@ red: $(TRed)
 #
 
 bin: 
-	mkdir ../bin
-	mkdir ../bin/exception			
-	mkdir ../bin/utility
-	mkdir ../bin/nonltr	
+	mkdir -p ../bin
+	mkdir -p ../bin/exception			
+	mkdir -p ../bin/utility
+	mkdir -p ../bin/nonltr	
 
 #
 # Make clean
