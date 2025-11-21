@@ -132,6 +132,12 @@ DetectorMaxima::~DetectorMaxima() {
 void DetectorMaxima::makeMask() {
 	const double PI = 3.14159265358979323846;
 	double sigma = (double) s / 3.5;
+
+	// Protect against division by zero if s is 0
+	if (sigma <= 0.0) {
+		sigma = 0.1;  // Set to small positive value
+	}
+
 	const double PART_1 = 1 / sqrt(2 * PI * pow(sigma, 2));
 
 	int l = 2 * s + 1;

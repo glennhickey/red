@@ -11,6 +11,7 @@ TableBuilder::TableBuilder(string dir, int motifSize, int order, int minObs) {
 	genomeDir = dir;
 	k = motifSize;
 	genomeLength = 0;
+	maxValue = 0;  // Initialize to prevent undefined behavior
 	// kmerTable = new KmerHashTable(k);
 	// kmerTable = new EnrichmentView(k);
 

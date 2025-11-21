@@ -365,9 +365,16 @@ int main(int argc, char * argv[]) {
 	}
 	fileList->clear();
 	delete fileList;
-	
+
+	// Check for zero genome length to avoid log(0)
+	if (genomeLength == 0) {
+	  cerr << "Error: Genome length is zero. Cannot calculate k-mer length." << endl;
+	  cerr << message << endl;
+	  return 1;
+	}
+
 	double temp = log(genomeLength) / log(4.0);
-	
+
 	int k = floor(temp);
 	cout << "The recommended k is " << k << "." << endl;
 	if (k > 15) {
@@ -463,9 +470,15 @@ int main(int argc, char * argv[]) {
 	}
 	fileList->clear();
 	delete fileList;
-	
+
 	// 2: Calculate the gc content of the input genome
-	double gc = 100.00 * genomeGc / genomeLength;
+	// Check for zero genome length to avoid division by zero
+	double gc = 50.0;  // Default to 50% if genome length is zero
+	if (genomeLength > 0) {
+		gc = 100.00 * genomeGc / genomeLength;
+	} else {
+		cout << "Warning: Genome length is zero. Using default GC content of 50%." << endl;
+	}
 	int w = 20;
 	if (gc < 33 || gc > 67) {
 	  w = 40;
