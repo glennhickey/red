@@ -157,7 +157,7 @@ void drive(map<string, string> * const param) {
       const vector<Chromosome *> * chromList = maker->makeChromOneDigitList();
 
       ChromListMaker * oMaker = new ChromListMaker(fileList->at(i));
-      const vector<Chromosome *> * oChromList;
+      const vector<Chromosome *> * oChromList = nullptr;
       if (param->count(MSK_PRM) > 0) {
 	oChromList = oMaker->makeChromList();
       }
@@ -309,36 +309,37 @@ int main(int argc, char * argv[]) {
   message.append("\tThe following command runs Red with the defaults and generates the masked sequences and the locations of repeats.\n");
   message.append("\tRed -gnm genome_directory -msk output_directory -rpt output_directory\n\n");
 
-  // Table of valid argument pairs
-  map<string, string> * validParam = new map<string, string>();
-  validParam->insert(map<string, string>::value_type(LEN_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(GNM_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(ORD_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(GAU_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(THR_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(HMI_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(SEQ_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(SCI_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(TBL_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(SCO_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(HMO_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(MSK_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(RPT_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(CND_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(DIR_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(MIN_PRM, "DUMMY"));
-  validParam->insert(map<string, string>::value_type(FRM_PRM, "DUMMY"));
+  // Table of valid argument pairs (stack-allocated to avoid memory leak)
+  map<string, string> validParam;
+  validParam.insert(map<string, string>::value_type(LEN_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(GNM_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(ORD_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(GAU_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(THR_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(HMI_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(SEQ_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(SCI_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(TBL_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(SCO_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(HMO_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(MSK_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(RPT_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(CND_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(DIR_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(MIN_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(FRM_PRM, "DUMMY"));
 
   // Make a table of the user provided arguments
   map<string, string> * param = new map<string, string>();
   if (argc > 1 && argc % 2 == 1) {
     for (int i = 1; i < argc - 1; i += 2) {
-      if (validParam->count(argv[i]) > 0) {
+      if (validParam.count(argv[i]) > 0) {
 	param->insert(map<string, string>::value_type(argv[i], argv[i + 1]));
       } else {
 	cerr << "Invalid argument: " << argv[i] << " " << argv[i + 1];
 	cerr << endl;
 	cerr << message << endl;
+	delete param;
 	return 1;
       }
     }
@@ -365,9 +366,17 @@ int main(int argc, char * argv[]) {
 	}
 	fileList->clear();
 	delete fileList;
-	
+
+	// Check for zero genome length to avoid log(0)
+	if (genomeLength == 0) {
+	  cerr << "Error: Genome length is zero. Cannot calculate k-mer length." << endl;
+	  cerr << message << endl;
+	  delete param;
+	  return 1;
+	}
+
 	double temp = log(genomeLength) / log(4.0);
-	
+
 	int k = floor(temp);
 	cout << "The recommended k is " << k << "." << endl;
 	if (k > 15) {
@@ -389,10 +398,11 @@ int main(int argc, char * argv[]) {
       } else {
 	cerr << "The word length is required." << endl;
 	cerr << message << endl;
+	delete param;
 	return 1;
       }
     }
-    
+
     if(param->count(FRM_PRM) == 0){
       cout << "Using the default output format chrName:start-end" << endl;
       param->insert(map<string, string>::value_type(FRM_PRM, Util::int2string(Scanner::FRMT_POS)));
@@ -401,6 +411,7 @@ int main(int argc, char * argv[]) {
 	cerr << "The output format must be " << Scanner::FRMT_POS << " or ";
 	cerr << Scanner::FRMT_BED << ". The format received is " ;
 	cerr << param->at(FRM_PRM) << "." << endl;
+	delete param;
 	return 1;
       }
     }
@@ -463,9 +474,15 @@ int main(int argc, char * argv[]) {
 	}
 	fileList->clear();
 	delete fileList;
-	
+
 	// 2: Calculate the gc content of the input genome
-	double gc = 100.00 * genomeGc / genomeLength;
+	// Check for zero genome length to avoid division by zero
+	double gc = 50.0;  // Default to 50% if genome length is zero
+	if (genomeLength > 0) {
+		gc = 100.00 * genomeGc / genomeLength;
+	} else {
+		cout << "Warning: Genome length is zero. Using default GC content of 50%." << endl;
+	}
 	int w = 20;
 	if (gc < 33 || gc > 67) {
 	  w = 40;

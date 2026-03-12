@@ -128,6 +128,9 @@ void Chromosome::readFasta() {
 	while (in.good()) {
 		string line;
 		getline(in, line);
+		if (line.empty()) {
+			continue;  // Skip empty lines
+		}
 		if (line[0] == '>') {
 			if (!isFirst) {
 				string msg = "Chromosome file: ";
@@ -189,6 +192,14 @@ void Chromosome::removeN() {
  */
 void Chromosome::mergeSegments() {
 	vector<vector<int> *> * mSegment = new vector<vector<int> *>();
+
+	// Handle empty segment list (e.g., all-N sequence)
+	if (segment->empty()) {
+		Util::deleteInVector(segment);
+		segment->clear();
+		segment = mSegment;
+		return;
+	}
 
 	int s = segment->at(0)->at(0);
 	int e = segment->at(0)->at(1);

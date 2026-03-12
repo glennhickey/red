@@ -321,8 +321,18 @@ void HMM::normalize() {
 	for (int i = 0; i < stateNumber; i++) {
 		sum += pList->at(i);
 	}
+	// Check for zero sum to avoid division by zero
+	if (sum == 0.0) {
+		sum = 1.0;  // Set to 1 if no training occurred
+	}
 	for (int i = 0; i < stateNumber; i++) {
-		(*pList)[i] = log(pList->at(i) / sum);
+		double value = pList->at(i) / sum;
+		// Avoid log(0) by using a small epsilon for zero values
+		if (value <= 0.0) {
+			(*pList)[i] = log(std::numeric_limits<double>::min());
+		} else {
+			(*pList)[i] = log(value);
+		}
 	}
 
 // Output
@@ -337,9 +347,19 @@ void HMM::normalize() {
 		for (int j = 0; j < stateNumber; j++) {
 			sum += row->at(j);
 		}
+		// Check for zero sum to avoid division by zero
+		if (sum == 0.0) {
+			sum = 1.0;  // Set to 1 if this state was never visited
+		}
 
 		for (int j = 0; j < stateNumber; j++) {
-			(*row)[j] = log(row->at(j) / sum);
+			double value = row->at(j) / sum;
+			// Avoid log(0) by using a small epsilon for zero values
+			if (value <= 0.0) {
+				(*row)[j] = log(std::numeric_limits<double>::min());
+			} else {
+				(*row)[j] = log(value);
+			}
 		}
 	}
 }

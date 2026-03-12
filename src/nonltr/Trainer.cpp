@@ -148,6 +148,12 @@ void Trainer::stage3() {
 	}
 	double hmmBase = isOne ? 1.5 : t;
 
+	// Ensure max is at least 1 to avoid log(0) which causes integer overflow
+	if (max < 1) {
+		cout << "Warning: Maximum k-mer count is " << max << ". Setting to 1 to avoid numerical issues." << endl;
+		max = 1;
+	}
+
 	// Make a list of candidate HMM
 	int stateCount = 2 * (ceil(log(max) / log(hmmBase)) + 1);
 
