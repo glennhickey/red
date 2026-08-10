@@ -283,6 +283,8 @@ void Scanner::printScores(string outputFile, bool canAppend) {
 		outScores.open(outputFile.c_str(), ios::out);
 	}
 
+	Util::checkStream(outScores, outputFile, "open");
+
 	int step = 50;
 	outScores << chrom->getHeader() << endl;
 	int len = scoreList->size();
@@ -294,7 +296,10 @@ void Scanner::printScores(string outputFile, bool canAppend) {
 		outScores << endl;
 	}
 	outScores << endl;
+	outScores.flush();
+	Util::checkStream(outScores, outputFile, "write to");
 	outScores.close();
+	Util::checkStream(outScores, outputFile, "close");
 }
 
 void Scanner::printIndex(string outputFile, bool canAppend, int frmt) {
@@ -317,6 +322,8 @@ void Scanner::printIndex(string outputFile, bool canAppend, int frmt) {
 		outIndex.open(outputFile.c_str(), ios::out);
 	}
 
+	Util::checkStream(outIndex, outputFile, "open");
+
 	// Write the index of the repeat segment [x,y[
 	string header = chrom->getHeader();
 
@@ -336,7 +343,10 @@ void Scanner::printIndex(string outputFile, bool canAppend, int frmt) {
 		}
 	}
 
+	outIndex.flush();
+	Util::checkStream(outIndex, outputFile, "write to");
 	outIndex.close();
+	Util::checkStream(outIndex, outputFile, "close");
 }
 
 void Scanner::printMasked(string outputFile, Chromosome& oChrom,
@@ -359,6 +369,8 @@ void Scanner::printMasked(string outputFile, Chromosome& oChrom,
 		outMask.open(outputFile.c_str(), ios::out);
 	}
 
+	Util::checkStream(outMask, outputFile, "open");
+
 	outMask << oChrom.getHeader() << endl;
 	int step = 50;
 	int len = baseCopy.size();
@@ -369,7 +381,14 @@ void Scanner::printMasked(string outputFile, Chromosome& oChrom,
 		}
 		outMask << endl;
 	}
+	// a failed write only shows up in the stream state, and the buffer is not
+	// necessarily handed to the OS until the flush and the close, so all three
+	// have to be checked.  Without this, running out of disk here produces a
+	// silently truncated sequence and an exit status of zero.
+	outMask.flush();
+	Util::checkStream(outMask, outputFile, "write to");
 	outMask.close();
+	Util::checkStream(outMask, outputFile, "close");
 }
 
 const vector<ILocation*>* Scanner::getRegionList() {

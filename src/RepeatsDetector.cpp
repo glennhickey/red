@@ -584,8 +584,16 @@ int main(int argc, char * argv[]) {
     cout << endl;
     
     // Start!
-    drive(param);
-    
+    // Anything that goes wrong in here -- a failed write above all -- has to
+    // reach the caller as a non-zero exit status.  A pipeline cannot tell a
+    // truncated output file from a complete one, so it can only rely on this.
+    try {
+      drive(param);
+    } catch (const std::exception & e) {
+      cerr << endl << "Red failed: " << e.what() << endl;
+      return EXIT_FAILURE;
+    }
+
     // Clear parameters when done.
     param->clear();
     delete param;
@@ -593,8 +601,8 @@ int main(int argc, char * argv[]) {
     cerr << "Argument pairs of the form: -flag value are required.";
     cerr << endl;
     cerr << message << endl;
+    return EXIT_FAILURE;
   }
-  
-  //return EXIT_SUCCESS;
-  return 0;
+
+  return EXIT_SUCCESS;
 }

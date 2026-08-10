@@ -342,6 +342,7 @@ void ChromosomeRandom::printSequence(string outputFile, string * baseToPrint) {
 	cout << "Printing chromosome to file ..." << endl;
 	ofstream outSequence;
 	outSequence.open(outputFile.c_str(), ios::out);
+	Util::checkStream(outSequence, outputFile, "open");
 
 	int step = 50;
 
@@ -357,7 +358,10 @@ void ChromosomeRandom::printSequence(string outputFile, string * baseToPrint) {
 	}
 	outSequence << endl;
 
+	outSequence.flush();
+	Util::checkStream(outSequence, outputFile, "write to");
 	outSequence.close();
+	Util::checkStream(outSequence, outputFile, "close");
 }
 
 } /* namespace nonltr */

@@ -421,6 +421,7 @@ void HMM::print() {
 
 void HMM::print(string hmo) {
 	ofstream out(hmo.c_str());
+	Util::checkStream(out, hmo, "open");
 	out.precision(PRECISION);
 
 	out << "Base" << endl << base << endl;
@@ -463,7 +464,10 @@ void HMM::print(string hmo) {
 	}
 	out << endl << endl;
 
+	out.flush();
+	Util::checkStream(out, hmo, "write to");
 	out.close();
+	Util::checkStream(out, hmo, "close");
 }
 
 /**
