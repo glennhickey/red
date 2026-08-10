@@ -76,6 +76,8 @@ void ChromDetectorMaxima::printIndex(string outputFile, bool canAppend) {
 		outIndex.open(outputFile.c_str(), ios::out);
 	}
 
+	Util::checkStream(outIndex, outputFile, "open");
+
 	// Write the index of the repeat segment [x,y[
 	for (int j = 0; j < regionList->size(); j++) {
 		outIndex << header << ":";
@@ -84,7 +86,10 @@ void ChromDetectorMaxima::printIndex(string outputFile, bool canAppend) {
 		outIndex << endl;
 	}
 
+	outIndex.flush();
+	Util::checkStream(outIndex, outputFile, "write to");
 	outIndex.close();
+	Util::checkStream(outIndex, outputFile, "close");
 }
 
 const vector<ILocation*>* ChromDetectorMaxima::getRegionList() const {

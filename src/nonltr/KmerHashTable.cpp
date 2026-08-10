@@ -387,6 +387,7 @@ void KmerHashTable<I, V>::printTable(string output) {
 	getKeys(keys);
 
 	ofstream out(output.c_str());
+	Util::checkStream(out, output, "open");
 
 	for (I i = 0; i < keys.size(); i++) {
 		const char * kmer = keys.at(i);
@@ -398,7 +399,10 @@ void KmerHashTable<I, V>::printTable(string output) {
 		out << " -> " << values[hash(keys.at(i), 0)] << endl;
 	}
 
+	out.flush();
+	Util::checkStream(out, output, "write to");
 	out.close();
+	Util::checkStream(out, output, "close");
 	keys.clear();
 }
 

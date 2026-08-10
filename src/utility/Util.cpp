@@ -320,10 +320,25 @@ void Util::revCompDig(string * s, string * rc) {
 	 */
 }
 
+void Util::checkStream(const ostream& out, const string& fileName,
+		const string& stage) {
+	if (!out.good()) {
+		string msg("Failed to ");
+		msg.append(stage);
+		msg.append(" the file: ");
+		msg.append(fileName);
+		msg.append(". Its contents may be incomplete. Check the free space, ");
+		msg.append("the quota and the permissions on the file system ");
+		msg.append("holding it.");
+		throw InvalidOperationException(msg);
+	}
+}
+
 void Util::writeFasta(const string& sequence, const string& header,
 		const string& outputFile) {
 	ofstream outMask;
 	outMask.open(outputFile.c_str(), ios::out);
+	checkStream(outMask, outputFile, "open");
 	outMask << header << endl;
 	int step = 50;
 	int len = sequence.size();
@@ -334,7 +349,10 @@ void Util::writeFasta(const string& sequence, const string& header,
 		}
 		outMask << endl;
 	}
+	outMask.flush();
+	checkStream(outMask, outputFile, "write to");
 	outMask.close();
+	checkStream(outMask, outputFile, "close");
 }
 
 int Util::sumTotalLength(const vector<ILocation *> * list) {

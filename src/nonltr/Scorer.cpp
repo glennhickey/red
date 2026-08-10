@@ -87,6 +87,8 @@ void Scorer::printScores(string outputFile, bool canAppend) {
 		outScores.open(outputFile.c_str(), ios::out);
 	}
 
+	Util::checkStream(outScores, outputFile, "open");
+
 	int step = 50;
 	outScores << chrom->getHeader() << endl;
 	int len = scores->size();
@@ -99,7 +101,10 @@ void Scorer::printScores(string outputFile, bool canAppend) {
 	}
 	outScores << endl;
 
+	outScores.flush();
+	Util::checkStream(outScores, outputFile, "write to");
 	outScores.close();
+	Util::checkStream(outScores, outputFile, "close");
 }
 
 int Scorer::countLessOrEqual(int thr) {

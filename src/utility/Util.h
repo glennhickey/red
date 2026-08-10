@@ -11,6 +11,7 @@
 #include "Location.h"
 #include "../exception/FileDoesNotExistException.h"
 #include "../exception/InvalidInputException.h"
+#include "../exception/InvalidOperationException.h"
 
 #include <vector>
 #include <string>
@@ -50,6 +51,16 @@ public:
 	static void revCompDig(const char* sequence, int, int, string *);
 
 	static void writeFasta(const string&, const string&, const string&);
+
+	/**
+	 * Throw if an output stream has gone bad.  An ostream reports a failed
+	 * write -- a full disk, a read-only mount, a quota -- by setting a flag
+	 * that nothing has to look at, so without this a truncated output file
+	 * looks exactly like a complete one and Red still exits successfully.
+	 * stage is used in the message, e.g. "open", "write to", "close".
+	 */
+	static void checkStream(const ostream&, const string& fileName,
+			const string& stage);
 
 	static int sumTotalLength(const vector<ILocation *> *);
 
