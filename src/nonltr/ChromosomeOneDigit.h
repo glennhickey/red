@@ -17,10 +17,14 @@ class ChromosomeOneDigit: public Chromosome {
 private:
 	/* Fields */
 	map<char, char> * codes;
+	// A flat, byte-indexed copy of "codes" used by the per-base loops.
+	char codeTable[256];
+	static const char INVALID_CODE;
 
 	/* Methods */
 	void help();
 	void buildCodes();
+	void buildCodeTable();
 	void encodeNucleotides();
 
 	void makeReverse();

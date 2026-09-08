@@ -38,6 +38,7 @@ private:
 	I * bases;
 	I * mMinusOne;
 	void initialize(int, V);
+	inline void checkNucleotide(char, int);
 
 public:
 	/* Methods */

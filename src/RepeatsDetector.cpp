@@ -152,21 +152,33 @@ void drive(map<string, string> * const param) {
       int dotLastIndex = path.find_last_of(".");
       string nickName = path.substr(slashLastIndex + 1, dotLastIndex - slashLastIndex - 1);
       
-      // Process each sequence with the ith file
-      ChromListMaker * maker = new ChromListMaker(fileList->at(i));
-      const vector<Chromosome *> * chromList = maker->makeChromOneDigitList();
+      // Process each sequence within the ith file.
+      //
+      // This used to read the file twice over and keep both results: every
+      // sequence encoded one-digit, and every sequence again in its original
+      // alphabet for the masked output.  For a genome held in one file that is
+      // two complete copies of the genome resident at once, which is where most
+      // of Red's memory went.  Now one record is read at a time and both forms
+      // are built from it, so the cost is set by the longest sequence.
+      ChromListMaker maker(fileList->at(i));
+      string header;
+      string seq;
+      bool hadSequence = false;
+      int h = -1;
 
-      ChromListMaker * oMaker = new ChromListMaker(fileList->at(i));
-      const vector<Chromosome *> * oChromList = nullptr;
-      if (param->count(MSK_PRM) > 0) {
-	oChromList = oMaker->makeChromList();
-      }
-      
-      for (int h = 0; h < chromList->size(); h++) {
-	ChromosomeOneDigit * chrom = dynamic_cast<ChromosomeOneDigit *>(chromList->at(h));
+      while (maker.nextSequence(header, seq, hadSequence)) {
+	h++;
+	ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(header,
+									seq, hadSequence);
+	Chromosome * oChrom = nullptr;
+	if (param->count(MSK_PRM) > 0) {
+	  oChrom = ChromListMaker::makeChrom(header, seq, hadSequence);
+	}
 	
-	// Scan the forward strand
+	// Scan the forward strand.  Its scores are of no further use once the
+	// regions are out, and this Scanner outlives the other two strands.
 	Scanner * scanner = new Scanner(trainer->getHmm(), k, chrom,trainer->getTable());
+	scanner->releaseScores();
 	
 	// Scan the reverse complement
 	chrom->makeRC();
@@ -217,16 +229,14 @@ void drive(map<string, string> * const param) {
 	  if (!canAppend) {
 	    cout << "Printing masked sequence to: " << mskFile << endl;
 	  }
-	  Chromosome * oChrom = oChromList->at(h);
 	  scanner->printMasked(mskFile, *oChrom, canAppend);
 	}
 	
 	// Free memory
 	delete scanner;
+	delete oChrom;
+	delete chrom;
       }
-      
-      delete maker;
-      delete oMaker;
     }
     
     // Free memory
@@ -346,27 +356,45 @@ int main(int argc, char * argv[]) {
     
     
     // Check if the user provided the essential arguments
-    
-    
-    if (param->count(LEN_PRM) == 0) {
-      if (param->count(GNM_PRM) > 0) {
-	// Calculate the size of the genome
-	long genomeLength = 0;
-	vector<string> * fileList = new vector<string>();
-	Util::readChromList(param->at(GNM_PRM), fileList, "fa");
+
+
+    // Both the default word length and the default Gaussian half width are
+    // derived from a sweep of the whole genome.  Those used to be two separate
+    // sweeps: the input was read, upper-cased, split into non-N segments and
+    // thrown away, then read and split all over again.  Measure once here and
+    // let both defaults use the result.
+    long genomeLength = 0;
+    long genomeGc = 0;
+    if (param->count(GNM_PRM) > 0
+	&& (param->count(LEN_PRM) == 0 || param->count(GAU_PRM) == 0)) {
+      vector<string> * fileList = new vector<string>();
+      Util::readChromList(param->at(GNM_PRM), fileList, "fa");
+      if (param->count(LEN_PRM) == 0) {
 	cout << "Calculating the length, k, of the k-mer ";
 	cout << "based on the input genome ... " << endl;
-	for (int i = 0; i < fileList->size(); i++) {
-	  ChromListMaker * maker = new ChromListMaker(fileList->at(i));
-	  const vector<Chromosome *> * chromList = maker->makeChromList();
-	  for (int h = 0; h < chromList->size(); h++) {
-	    genomeLength += chromList->at(h)->getEffectiveSize();
-	  }
-	  delete maker;
+      }
+      if (param->count(GAU_PRM) == 0) {
+	cout << "Calculating GC content ..." << endl;
+      }
+      string header;
+      string seq;
+      bool hadSequence = false;
+      for (int i = 0; i < fileList->size(); i++) {
+	ChromListMaker maker(fileList->at(i));
+	while (maker.nextSequence(header, seq, hadSequence)) {
+	  Chromosome * chrom = ChromListMaker::makeChrom(header, seq,
+							 hadSequence);
+	  genomeLength += chrom->getEffectiveSize();
+	  genomeGc += chrom->getGcContent();
+	  delete chrom;
 	}
-	fileList->clear();
-	delete fileList;
+      }
+      fileList->clear();
+      delete fileList;
+    }
 
+    if (param->count(LEN_PRM) == 0) {
+      if (param->count(GNM_PRM) > 0) {
 	// Check for zero genome length to avoid log(0)
 	if (genomeLength == 0) {
 	  cerr << "Error: Genome length is zero. Cannot calculate k-mer length." << endl;
@@ -455,25 +483,7 @@ int main(int argc, char * argv[]) {
       }
       
       if (param->count(GAU_PRM) == 0) {
-	cout << "Calculating GC content ..." << endl;
-	
-	// 1: Count the gc content of the input genome
-	long genomeLength = 0;
-	long genomeGc = 0;
-	vector<string> * fileList = new vector<string>();
-	Util::readChromList(param->at(GNM_PRM), fileList, "fa");
-	for (int i = 0; i < fileList->size(); i++) {
-	  ChromListMaker * maker = new ChromListMaker(fileList->at(i));
-	  const vector<Chromosome *> * chromList = maker->makeChromList();
-
-	  for (int h = 0; h < chromList->size(); h++) {
-	    genomeGc += chromList->at(h)->getGcContent();
-	    genomeLength += chromList->at(h)->getEffectiveSize();
-	  }
-	  delete maker;
-	}
-	fileList->clear();
-	delete fileList;
+	// 1: The counts come from the single measurement pass above.
 
 	// 2: Calculate the gc content of the input genome
 	// Check for zero genome length to avoid division by zero

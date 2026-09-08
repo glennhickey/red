@@ -158,30 +158,59 @@ void DetectorMaxima::makeMask() {
 }
 
 void DetectorMaxima::smooth() {
+	// This is the widest inner loop in Red: one multiply-add per mask element
+	// -- 41 of them at the default half width, 81 at the wide one -- for every
+	// base of the genome.  The arithmetic below is deliberately unchanged, and
+	// in particular the terms are still summed in the original order, so the
+	// smoothed scores are bit-for-bit what they were.  What is removed is the
+	// per-element overhead: the bounds checks of vector::at, the repeated
+	// growth of the output vector, and the re-accumulation of the mask weights.
+	const int halfWidth = (int) s;
+	const int maskLen = 2 * halfWidth + 1;
+	const int len = segEnd - segStart + 1;
+
+	scores->reserve(len);
+
+	const double * const maskData = mask->data();
+	const int * const oScoresData = oScores->data();
+
+	// Away from the two ends of the segment the window covers the whole mask,
+	// so the weight sum is the same everywhere.  Summing it once here, in the
+	// same order the inner loop used, gives an identical divisor.
+	double fullMaskSum = 0.0;
+	for (int h = 0; h < maskLen; h++) {
+		fullMaskSum += maskData[h];
+	}
+
 	for (int i = segStart; i <= segEnd; i++) {
-		int winS = i - s;
+		int winS = i - halfWidth;
 		int maskS = 0;
 		if (winS < segStart) {
 			maskS = -1 * (winS - segStart);
 			winS = segStart;
 		}
 
-		int winE = (i + s > segEnd) ? segEnd : i + s;
-		// int winL = winE - winS + 1;
+		int winE = (i + halfWidth > segEnd) ? segEnd : i + halfWidth;
+		const int winL = winE - winS + 1;
+
+		const double * const m = maskData + maskS;
+		const int * const o = oScoresData + winS;
 
 		double sum = 0.0;
-		double maskSum = 0.0;
+		double maskSum;
 
-		int j = winS;
-		int h = maskS;
-
-		while (j <= winE) {
-			double weight = mask->at(h);
-			sum += oScores->at(j) * weight;
-			maskSum += weight;
-
-			j++;
-			h++;
+		if (winL == maskLen) {
+			for (int h = 0; h < maskLen; h++) {
+				sum += o[h] * m[h];
+			}
+			maskSum = fullMaskSum;
+		} else {
+			maskSum = 0.0;
+			for (int h = 0; h < winL; h++) {
+				double weight = m[h];
+				sum += o[h] * weight;
+				maskSum += weight;
+			}
 		}
 
 		if (maskSum <= 0.0) {
@@ -209,24 +238,29 @@ void DetectorMaxima::smooth() {
 }
 
 void DetectorMaxima::deriveFirst() {
+	const double * const sc = scores->data();
+	const int scSize = scores->size();
+	const int wInt = (int) w;
+
 	double l = 0.0;
 	double r = 0.0;
 
-	for (int i = 0; i < w; i++) {
-		l += scores->at(i);
+	for (int i = 0; i < wInt; i++) {
+		l += sc[i];
 	}
 
-	for (int i = w + 1; i <= 2 * w; i++) {
-		r += scores->at(i);
+	for (int i = wInt + 1; i <= 2 * wInt; i++) {
+		r += sc[i];
 	}
 
+	first->reserve(scSize > 2 * wInt ? scSize - 2 * wInt : 1);
 	first->push_back(round(-1 * l + r));
 
-	for (int i = w + 1; i < scores->size() - w; i++) {
-		l -= scores->at(i - w - 1);
-		l += scores->at(i - 1);
-		r -= scores->at(i);
-		r += scores->at(i + w);
+	for (int i = wInt + 1; i < scSize - wInt; i++) {
+		l -= sc[i - wInt - 1];
+		l += sc[i - 1];
+		r -= sc[i];
+		r += sc[i + wInt];
 		first->push_back(round(-1 * l + r));
 	}
 
@@ -240,26 +274,31 @@ void DetectorMaxima::deriveFirst() {
 }
 
 void DetectorMaxima::deriveSecond() {
+	const double * const sc = scores->data();
+	const int scSize = scores->size();
+	const int wInt = (int) w;
+
 	double l = 0.0;
 	double r = 0.0;
 	double d = 2 * w;
 
-	for (int i = 0; i < w; i++) {
-		l += scores->at(i);
+	for (int i = 0; i < wInt; i++) {
+		l += sc[i];
 	}
 
-	for (int i = w + 1; i <= 2 * w; i++) {
-		r += scores->at(i);
+	for (int i = wInt + 1; i <= 2 * wInt; i++) {
+		r += sc[i];
 	}
 
-	second->push_back(round(l + r - d * scores->at(w)));
+	second->reserve(scSize > 2 * wInt ? scSize - 2 * wInt : 1);
+	second->push_back(round(l + r - d * sc[wInt]));
 
-	for (int i = w + 1; i < scores->size() - w; i++) {
-		l -= scores->at(i - w - 1);
-		l += scores->at(i - 1);
-		r -= scores->at(i);
-		r += scores->at(i + w);
-		second->push_back(round(l + r - d * scores->at(i)));
+	for (int i = wInt + 1; i < scSize - wInt; i++) {
+		l -= sc[i - wInt - 1];
+		l += sc[i - 1];
+		r -= sc[i];
+		r += sc[i + wInt];
+		second->push_back(round(l + r - d * sc[i]));
 	}
 
 	// For testing only
@@ -273,13 +312,15 @@ void DetectorMaxima::deriveSecond() {
 
 void DetectorMaxima::findMaxima() {
 	int firstSize = first->size();
+	const double * const fst = first->data();
+	const double * const snd = second->data();
 
 	for (int i = 1; i < firstSize; i++) {
-		double magnitude = abs(first->at(i - 1) - first->at(i));
+		double magnitude = abs(fst[i - 1] - fst[i]);
 
-		if (first->at(i) == 0 || (first->at(i - 1) < 0 & first->at(i) > 0)
-				|| (first->at(i - 1) > 0 && first->at(i) < 0)) {
-			if (second->at(i) < 0) {
+		if (fst[i] == 0 || (fst[i - 1] < 0 & fst[i] > 0)
+				|| (fst[i - 1] > 0 && fst[i] < 0)) {
+			if (snd[i] < 0) {
 				// Adjust index
 				int peakIndex = i + w + segStart;
 
@@ -328,8 +369,9 @@ void DetectorMaxima::findMaxima() {
 
 int DetectorMaxima::countLessThan(vector<int> * list, int s, int e, double t) {
 	int count = 0;
+	const int * const v = list->data();
 	for (int u = s; u <= e; u++) {
-		if (list->at(u) < t) {
+		if (v[u] < t) {
 			count++;
 		}
 	}
@@ -392,11 +434,25 @@ void DetectorMaxima::findRegions() {
 /*
  *
  */
+/**
+ * Extend each region outwards, then collapse any that end up overlapping.
+ *
+ * As in Scanner::merge, the absorbed region used to be erased from the middle
+ * of the vector, shifting every later element; the same merges are done here
+ * by compacting in place.  The erased region was also never freed, so a
+ * repeat-rich segment leaked one Location per merge.
+ */
 void DetectorMaxima::extendRegions() {
-	int regionCount = regionList->size();
-	int gg = 0;
-	while (gg < regionCount) {
-		ILocation * region = regionList->at(gg);
+	const int regionCount = regionList->size();
+	if (regionCount == 0) {
+		return;
+	}
+
+	const int * const oScoresData = oScores->data();
+
+	int write = -1;
+	for (int read = 0; read < regionCount; read++) {
+		ILocation * region = regionList->at(read);
 
 		int regionStart = region->getStart();
 		int regionEnd = region->getEnd();
@@ -417,7 +473,7 @@ void DetectorMaxima::extendRegions() {
 		}
 
 		// Left end: Extend step by step
-		int lEnd = (gg == 0) ? segStart : regionList->at(gg - 1)->getEnd();
+		int lEnd = (write < 0) ? segStart : regionList->at(write)->getEnd();
 		for (int u = regionStart; u >= lEnd; u = u - e) {
 			int d = u - e + 1;
 			if (d < lEnd) {
@@ -432,16 +488,16 @@ void DetectorMaxima::extendRegions() {
 		}
 
 		// Left end: Extend or erode base by base
-		if (oScores->at(regionStart) < t) {
+		if (oScoresData[regionStart] < t) {
 			for (int a = regionStart; a < regionEnd; a++) {
-				if (oScores->at(a) >= t) {
+				if (oScoresData[a] >= t) {
 					regionStart = a;
 					break;
 				}
 			}
 		} else {
 			for (int a = regionStart; a >= lEnd; a--) {
-				if (oScores->at(a) >= t) {
+				if (oScoresData[a] >= t) {
 					regionStart = a;
 				} else {
 					break;
@@ -454,8 +510,8 @@ void DetectorMaxima::extendRegions() {
 
 		// Right end: extend to the right step by step
 		int rEnd =
-				(gg == regionCount - 1) ?
-						segEnd : regionList->at(gg + 1)->getStart();
+				(read == regionCount - 1) ?
+						segEnd : regionList->at(read + 1)->getStart();
 		for (int u = regionEnd; u <= rEnd; u = u + e) {
 			int d = u + e - 1;
 			if (d > rEnd) {
@@ -470,16 +526,16 @@ void DetectorMaxima::extendRegions() {
 		}
 
 		// Right end: extend or erod base by base
-		if (oScores->at(regionEnd) < t) {
+		if (oScoresData[regionEnd] < t) {
 			for (int a = regionEnd; a > regionStart; a--) {
-				if (oScores->at(a) >= t) {
+				if (oScoresData[a] >= t) {
 					regionEnd = a;
 					break;
 				}
 			}
 		} else {
 			for (int a = regionEnd; a <= rEnd; a++) {
-				if (oScores->at(a) >= t) {
+				if (oScoresData[a] >= t) {
 					regionEnd = a;
 				} else {
 					break;
@@ -491,24 +547,23 @@ void DetectorMaxima::extendRegions() {
 		region->setEnd(regionEnd);
 
 		// Merge overlapping regions
-		if (gg > 0) {
-			ILocation * pRegion = regionList->at(gg - 1);
+		if (write >= 0) {
+			ILocation * pRegion = regionList->at(write);
 			int pStart = pRegion->getStart();
 			int pEnd = pRegion->getEnd();
 
 			if (Util::isOverlapping(pStart, pEnd, regionStart, regionEnd)) {
 				pRegion->setEnd(regionEnd);
-				regionList->erase(regionList->begin() + gg);
-				regionCount = regionList->size();
-			} else {
-				gg++;
+				delete region;
+				continue;
 			}
 		}
 
-		if (gg == 0) {
-			gg++;
-		}
+		write++;
+		(*regionList)[write] = region;
 	}
+
+	regionList->resize(write + 1);
 
 	// Testing - Start
 	/*

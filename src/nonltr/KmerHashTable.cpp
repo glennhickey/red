@@ -6,6 +6,7 @@
  */
 #include <stdio.h>
 #include <math.h>
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 
@@ -66,9 +67,7 @@ void KmerHashTable<I, V>::initialize(int keyLength, V initialValueIn) {
 
 	// Initialize values
 	values = new V[maxTableSize];
-	for (I i = 0; i < maxTableSize; i++) {
-		values[i] = initialValue;
-	}
+	std::fill_n(values, maxTableSize, initialValue);
 
 	// Test
 	/*
@@ -129,32 +128,48 @@ I KmerHashTable<I, V>::hash(const char * sequence, int keyStart) {
 	return index;
 }
 
+/**
+ * Validate a single encoded nucleotide as it enters the rolling window.
+ *
+ * The list-building version of this class validated the whole range in a
+ * separate pass before hashing anything.  That pass costs a full sweep of the
+ * segment for no extra safety -- it did not even cover the last k-1 bases,
+ * which the rolling hash still reads -- so the check now happens on each byte
+ * as it is consumed.  Every byte actually read is checked, and nothing is read
+ * twice.
+ */
+template<class I, class V>
+inline void KmerHashTable<I, V>::checkNucleotide(char nucleotide, int index) {
+	if (!(nucleotide >= 0 && nucleotide <= 3)) {
+		string msg("The value of the char representing the nucleotide ");
+		msg.append("must be between 0 and 3.");
+		msg.append("The int value is ");
+		msg.append(Util::int2string((int) nucleotide));
+		msg.append(" of nucleotide at index ");
+		msg.append(Util::int2string(index));
+
+		throw InvalidInputException(msg);
+	}
+}
+
 template<class I, class V>
 void KmerHashTable<I, V>::hash(const char * sequence, int start, int end,
 		vector<I> * hashList) {
-
-	for (int i = start; i <= end; i++) {
-		char nucleotide = sequence[i];
-		if (!(nucleotide >= 0 && nucleotide <= 3)) {
-			string msg("The value of the char representing the nucleotide ");
-			msg.append("must be between 0 and 3.");
-			msg.append("The int value is ");
-			msg.append(Util::int2string((int) nucleotide));
-			msg.append(" of nucleotide at index ");
-			msg.append(Util::int2string(i));
-
-			throw InvalidInputException(msg);
-		}
+	if (end < start) {
+		return;
 	}
+
+	hashList->reserve(hashList->size() + (size_t) (end - start + 1));
 
 	I lastHash = hash(sequence, start);
 	hashList->push_back(lastHash);
 
 	for (int i = start + 1; i <= end; i++) {
-		I s1 = 4 * (lastHash - mMinusOne[(int) sequence[i - 1]])
-				+ (int) sequence[i + k - 1];
-		hashList->push_back(s1);
-		lastHash = s1;
+		char entering = sequence[i + k - 1];
+		checkNucleotide(entering, i + k - 1);
+		lastHash = 4 * (lastHash - mMinusOne[(int) sequence[i - 1]])
+				+ (int) entering;
+		hashList->push_back(lastHash);
 	}
 }
 
@@ -190,32 +205,75 @@ void KmerHashTable<I, V>::insert(I keyHash, V value) {
  * sFirstKmer: is the start index of the first k-mer.
  * sLastKmer: is the start index of the last k-mer.
  */
+/**
+ * The number of hashes computed ahead of the table accesses that use them.
+ *
+ * The k-mer table is much larger than the last level cache -- four gigabytes at
+ * k=15 -- and consecutive k-mers land in unrelated parts of it, so nearly every
+ * access is a cache miss and the loop spends its time waiting.  The hash chain
+ * itself is cheap and strictly sequential, so it can run ahead and prefetch the
+ * lines the loop is about to need.  Must be a power of two.
+ */
+#define KMER_PREFETCH_DISTANCE 32
+
+/* Both compilers the Makefile selects have this; anything else just skips it. */
+#if defined(__GNUC__) || defined(__clang__)
+#define KMER_PREFETCH(addr, isWrite) __builtin_prefetch((addr), (isWrite), 0)
+#else
+#define KMER_PREFETCH(addr, isWrite) ((void) 0)
+#endif
+
+/**
+ * Increment the table entry of every k-mer in [firstKmerStart, lastKmerStart].
+ *
+ * The hashes used to be collected into a vector first and then applied in a
+ * second loop.  For a chromosome-sized segment that is an extra eight bytes of
+ * heap per base plus two more passes over memory, and this runs once per
+ * background model per base on top of the main table, so the roll and the
+ * increment are fused here instead.
+ */
 template<class I, class V>
 void KmerHashTable<I, V>::wholesaleIncrement(const char* sequence,
 		int firstKmerStart, int lastKmerStart) {
-	// Increment k-mer's in the forward strand
-	vector<I> hashList = vector<I>();
-	hash(sequence, firstKmerStart, lastKmerStart, &hashList);
-
-	int size = hashList.size();
-	for (int i = 0; i < size; i++) {
-		I keyHash = hashList.at(i);
-		values[keyHash]++;
+	if (lastKmerStart < firstKmerStart) {
+		return;
 	}
 
-	// Increment k-mer's in the reverse complement
-	/*
-	string rc("");
-	Util::revCompDig(sequence, firstKmerStart, lastKmerStart + k - 1, &rc);
+	const int total = lastKmerStart - firstKmerStart + 1;
+	const int kMinusOne = k - 1;
+	const int mask = KMER_PREFETCH_DISTANCE - 1;
+	I ring[KMER_PREFETCH_DISTANCE];
 
-	hashList.clear();
-	hash(rc.c_str(), 0, rc.size() - k, &hashList);
-	size = hashList.size();
+	I rolling = hash(sequence, firstKmerStart);
+	ring[0] = rolling;
+	KMER_PREFETCH(&values[rolling], 1);
 
-	for (int i = 0; i < size; i++) {
-		I keyHash = hashList.at(i);
-		values[keyHash]++;
-	}*/
+	int primed = 1;
+	while (primed < KMER_PREFETCH_DISTANCE && primed < total) {
+		int i = firstKmerStart + primed;
+		char entering = sequence[i + kMinusOne];
+		checkNucleotide(entering, i + kMinusOne);
+		rolling = 4 * (rolling - mMinusOne[(int) sequence[i - 1]])
+				+ (int) entering;
+		ring[primed & mask] = rolling;
+		KMER_PREFETCH(&values[rolling], 1);
+		primed++;
+	}
+
+	for (int n = 0; n < total; n++) {
+		values[ring[n & mask]]++;
+
+		int ahead = n + KMER_PREFETCH_DISTANCE;
+		if (ahead < total) {
+			int i = firstKmerStart + ahead;
+			char entering = sequence[i + kMinusOne];
+			checkNucleotide(entering, i + kMinusOne);
+			rolling = 4 * (rolling - mMinusOne[(int) sequence[i - 1]])
+					+ (int) entering;
+			ring[ahead & mask] = rolling;
+			KMER_PREFETCH(&values[rolling], 1);
+		}
+	}
 }
 
 /**
@@ -306,15 +364,51 @@ template<class I, class V>
 void KmerHashTable<I, V>::wholesaleValueOf(const char * sequence,
 		int firstKmerStart, int lastKmerStart, vector<V> * results,
 		int resultsStart) {
+	if (lastKmerStart < firstKmerStart) {
+		return;
+	}
 
-	int index = resultsStart;
-	vector<I> hashList = vector<I>();
-	hash(sequence, firstKmerStart, lastKmerStart, &hashList);
-	int size = hashList.size();
+	// As in wholesaleIncrement: roll the hash straight into the output rather
+	// than building the intermediate list, and run the hash ahead of the loads
+	// so the misses overlap.  This one runs over the whole genome five times in
+	// a -gnm run (once to measure the percentage, once to train, and once per
+	// strand while scanning), and it is the single hottest loop in Red.
+	V * out = &((*results)[resultsStart]);
 
-	for (int i = 0; i < size; i++) {
-		(*results)[index] = values[hashList.at(i)];
-		index++;
+	const int total = lastKmerStart - firstKmerStart + 1;
+	const int kMinusOne = k - 1;
+	const int mask = KMER_PREFETCH_DISTANCE - 1;
+	I ring[KMER_PREFETCH_DISTANCE];
+
+	I rolling = hash(sequence, firstKmerStart);
+	ring[0] = rolling;
+	KMER_PREFETCH(&values[rolling], 0);
+
+	int primed = 1;
+	while (primed < KMER_PREFETCH_DISTANCE && primed < total) {
+		int i = firstKmerStart + primed;
+		char entering = sequence[i + kMinusOne];
+		checkNucleotide(entering, i + kMinusOne);
+		rolling = 4 * (rolling - mMinusOne[(int) sequence[i - 1]])
+				+ (int) entering;
+		ring[primed & mask] = rolling;
+		KMER_PREFETCH(&values[rolling], 0);
+		primed++;
+	}
+
+	for (int n = 0; n < total; n++) {
+		*out++ = values[ring[n & mask]];
+
+		int ahead = n + KMER_PREFETCH_DISTANCE;
+		if (ahead < total) {
+			int i = firstKmerStart + ahead;
+			char entering = sequence[i + kMinusOne];
+			checkNucleotide(entering, i + kMinusOne);
+			rolling = 4 * (rolling - mMinusOne[(int) sequence[i - 1]])
+					+ (int) entering;
+			ring[ahead & mask] = rolling;
+			KMER_PREFETCH(&values[rolling], 0);
+		}
 	}
 }
 

@@ -151,11 +151,28 @@ void Chromosome::readFasta() {
 }
 
 /**
+ * A byte-indexed table standing in for toupper().  toupper() is a locale-aware
+ * library call, so at one call per base it is a measurable share of every pass
+ * over a multi-gigabase genome.  The table gives the same answer in the "C"
+ * locale, which is the only locale Red ever runs under.
+ */
+static const char * makeUpperTable() {
+	static char t[256];
+	for (int i = 0; i < 256; i++) {
+		t[i] = (i >= 'a' && i <= 'z') ? (char) (i - 'a' + 'A') : (char) i;
+	}
+	return t;
+}
+static const char * const UPPER_TABLE = makeUpperTable();
+
+/**
  * Convert alphabet to upper case if it has not been done before
  **/
 void Chromosome::toUpperCase() {
-	for (int i = 0; i < base.length(); i++) {
-		base[i] = toupper(base[i]);
+	size_t len = base.length();
+	char * b = &base[0];
+	for (size_t i = 0; i < len; i++) {
+		b[i] = UPPER_TABLE[(unsigned char) b[i]];
 	}
 }
 
@@ -165,17 +182,19 @@ void Chromosome::toUpperCase() {
 void Chromosome::removeN() {
 	// Store non-N index
 	int start = -1;
-	for (int i = 0; i < base.size(); i++) {
-		if (base[i] != 'N' && start == -1) {
+	const int baseSize = base.size();
+	const char * b = base.data();
+	for (int i = 0; i < baseSize; i++) {
+		if (b[i] != 'N' && start == -1) {
 			start = i;
-		} else if (base[i] == 'N' && start != -1) {
+		} else if (b[i] == 'N' && start != -1) {
 			vector<int> * v = new vector<int>();
 			v->push_back(start);
 			v->push_back(i - 1);
 			segment->push_back(v);
 
 			start = -1;
-		} else if (i == base.size() - 1 && base[i] != 'N' && start != -1) {
+		} else if (i == baseSize - 1 && b[i] != 'N' && start != -1) {
 			vector<int> * v = new vector<int>();
 			v->push_back(start);
 			v->push_back(i);
@@ -308,9 +327,10 @@ int Chromosome::getEffectiveSize() {
 
 int Chromosome::getGcContent() {
 	int gc = 0;
-	int size = base.size();
-	for (int i = 0; i < size; i++) {
-		char n = base.at(i);
+	size_t size = base.size();
+	const char * b = base.data();
+	for (size_t i = 0; i < size; i++) {
+		char n = b[i];
 		if (n == 'C' || n == 'G') {
 			gc++;
 		}

@@ -107,109 +107,100 @@ void EnrichmentMarkovView<I, V>::generateProbapilities() {
 	}
 }
 
+/**
+ * Convert the raw k-mer counts into enrichment values.
+ *
+ * This visits every one of the 4^k table entries -- just over a billion at
+ * k=15 -- so anything done per entry matters.  The original carried the key
+ * around as a quaternary string, incremented it digit by digit, and asked the
+ * background models to re-hash that string; for the highest-order model it
+ * also allocated two vectors per key to collect the window values.
+ *
+ * The table index *is* the key: entry y holds the k-mer whose digits are the
+ * base-4 digits of y, most significant first.  So every sub-word the models
+ * are asked about is a shift and a mask of y, and no string, no hashing, and
+ * no allocation is needed.  The arithmetic and the order of the multiplications
+ * are unchanged.
+ *
+ * One quirk of the old loop is reproduced deliberately, see shiftPoint below.
+ */
 template<class I, class V>
 void EnrichmentMarkovView<I, V>::processTable() {
-	char base = 4;
-	int modelNumber = modelList->size();
+	const int kLen = KmerHashTable<I, V>::k;
+	const I tableSize = KmerHashTable<I, V>::maxTableSize;
+	const int modelNumber = modelList->size();
 
-	// Make a zero in quaternary form as a string of length k.
-	string q("");
-	for (int x = 0; x < KmerHashTable<I, V>::k; x++) {
-		q.append(1, 0);
-	}
+	// The model of the highest order; its keys are o+1 bases long.
+	KmerHashTable<int, int> * const oTable = modelList->at(modelNumber - 1);
+	const int resultsSize = kLen - o - 1;
+	const int wordMask = (1 << (2 * (o + 1))) - 1;
 
-	double lowerP;
-	double upperP;
-	for (I y = 0; y < KmerHashTable<I, V>::maxTableSize; y++) {
+	// The old loop kept the key as a quaternary string and, just before
+	// incrementing it, "guarded against overflow" by prepending a zero digit
+	// whenever the leading digit had reached 3.  The string is k digits long,
+	// so that fires the first time y reaches 3 * 4^(k-1) -- and from then on
+	// the string is k+1 digits, while every lookup still read the first k of
+	// them.  So for the whole last quarter of the table the background models
+	// were queried about a zero followed by all but the last base of the key:
+	// the key shifted right by one digit.
+	//
+	// That is a bug, but it decides which k-mers Red calls enriched, and so
+	// what it ends up masking.  Changing it would change Red's output, which
+	// is not what a speed-up should do, so it is reproduced exactly here.
+	const I shiftPoint = ((I) 3) << (2 * (kLen - 1));
+
+	double lowerP = 1.0;
+	double upperP = 1.0;
+
+	for (I y = 0; y < tableSize; y++) {
 		if (y % 10000000 == 0) {
 			cout << "Processing " << y << " keys out of "
 					<< KmerHashTable<I, V>::maxTableSize;
 			cout << endl;
 		}
 
-		const char * qc = q.c_str();
+		// The key the background models are actually asked about.
+		const I yEff = (y <= shiftPoint) ? y : (y >> 2);
 
 		// Calculate the expected number of occurrences.
-
-		// a. Calculate probability from lower order models.
-		// Lower probabilities are the same for four consecutive words of length of k-1
+		//
+		// Both probabilities depend only on the first k-1 digits, so they are
+		// shared by the four keys that differ in the last one.
 		if (y % 4 == 0) {
+			// a. Calculate probability from lower order models.
 			lowerP = 1.0;
 			for (int m = 0; m < modelNumber - 1; m++) {
-				KmerHashTable<int, int> * oTable = modelList->at(m);
-				lowerP *= (((double) oTable->valueOf(qc, 0)) / factor);
+				// The first m+1 digits of y.
+				int prefix = (int) (yEff >> (2 * (kLen - m - 1)));
+				lowerP *= (((double) modelList->at(m)->valueOf(prefix))
+						/ factor);
+			}
+
+			// b. Calculate probability based on the specified order: the
+			// windows of o+1 bases starting at 0 .. resultsSize-1.
+			upperP = 1.0;
+			for (int i = 0; i < resultsSize; i++) {
+				int word = (int) ((yEff >> (2 * (kLen - i - o - 1))) & wordMask);
+				upperP *= (((double) oTable->valueOf(word)) / factor);
 			}
 		}
 
-		// b. Calculate probability based on the specified order.
-		KmerHashTable<int, int> * oTable = modelList->at(modelNumber - 1);
-		int resultsSize = KmerHashTable<I, V>::k - o - 1;
-
-		// Upper probabilities are the same for four consecutive words of length of k-1
-		// The scanning of words or length corresponding to the highest order + 1
-		// This step is not needed if k = o + 1, i.e. resultsSize = 0.
-		if (y % 4 == 0) {
-			if (resultsSize > 0) {
-				//Initialize the elements of the vector invalid index
-				vector<int> results = vector<int>(resultsSize, -987);
-				oTable->wholesaleValueOf(qc, 0, resultsSize - 1, &results, 0);
-
-				upperP = 1.0;
-				for (int i = 0; i < resultsSize; i++) {
-					upperP *= (((double) results.at(i)) / factor);
-				}
-				results.clear();
-
-			} else {
-				upperP = 1.0;
-			}
-		}
+		// The last window of o+1 bases, i.e. the one starting at resultsSize.
+		const int lastWord = (int) (yEff & wordMask);
 
 		// The expected number of occurances
 		double exp = l * lowerP * upperP
-				* (((double) oTable->valueOf(qc, resultsSize)) / factor);
+				* (((double) oTable->valueOf(lastWord)) / factor);
 
 		// Calculate the enrichment value.
-		// Log value
-		// values[y] = round((log((double) values[y] + 1.0) - log(exp + 1.0)));
-
-		// Raw value
-		// Requirement: if observed is >= 5 && observed > expected then the value is the difference
-		// otherwise the value is zero
-
+		// Requirement: if observed is >= minObs && observed > expected then the
+		// value is the difference, otherwise the value is zero.
 		V observed = KmerHashTable<I, V>::values[y];
 
 		if (observed >= minObs && observed > exp) {
-
 			KmerHashTable<I, V>::values[y] = round(observed - exp);
 		} else {
 			KmerHashTable<I, V>::values[y] = 0;
-		}
-
-		/*
-		 KmerHashTable<I, V>::values[y] =
-		 round(
-		 (((double) KmerHashTable<I, V>::values[y] + 1.0)
-		 / (exp + 1.0)));
-		 */
-
-		// Increment the quaternary number:
-		// 1 - guard against overflow.
-		if (q[0] == base - 1) {
-			string z("");
-			z.append(1, 0);
-			q = z + q;
-		}
-
-		// 2 - increment the quaternary number by 1.
-		int qLen = q.size();
-		for (int i = qLen - 1; i >= 0; i--) {
-			if (q[i] + 1 < base) {
-				q[i] = q[i] + 1;
-				break;
-			} else {
-				q[i] = 0;
-			}
 		}
 	}
 }

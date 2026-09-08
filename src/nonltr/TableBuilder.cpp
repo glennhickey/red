@@ -29,23 +29,22 @@ void TableBuilder::buildTable() {
 	vector<string> * fileList = new vector<string>();
 	Util::readChromList(genomeDir, fileList, "fa");
 
+	// One sequence in memory at a time rather than the whole file at once.
+	string header;
+	string seq;
+	bool hadSequence = false;
+
 	for (int i = 0; i < fileList->size(); i++) {
 		cout << "Counting k-mers in " << fileList->at(i) << " ..." << endl;
-		ChromListMaker * maker = new ChromListMaker(fileList->at(i));
-		const vector<Chromosome *> * chromList = maker->makeChromOneDigitList();
+		ChromListMaker maker(fileList->at(i));
 
-		for (int h = 0; h < chromList->size(); h++) {
-			ChromosomeOneDigit * chrom =
-					dynamic_cast<ChromosomeOneDigit *>(chromList->at(h));
-			if (chrom) {
-				genomeLength += chrom->getEffectiveSize();
-				updateTable(chrom);
-			} else {
-				throw InvalidStateException(string("Dynamic cast failed."));
-			}
+		while (maker.nextSequence(header, seq, hadSequence)) {
+			ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(
+					header, seq, hadSequence);
+			genomeLength += chrom->getEffectiveSize();
+			updateTable(chrom);
+			delete chrom;
 		}
-
-		delete maker;
 	}
 	// Check if overflow has occurred
 	kmerTable->checkOverflow();

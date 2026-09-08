@@ -14,7 +14,7 @@ Scorer::Scorer(ChromosomeOneDigit * chromIn,
 	k = kmerTable->getK();
 	max = -1;
 	score();
-	calculateMax();
+	checkNotEmpty();
 }
 
 Scorer::~Scorer() {
@@ -37,10 +37,57 @@ void Scorer::score() {
 				start);
 
 		// Handle the last word from end - k + 2 till the end, inclusive.
+		int * sc = scores->data();
 		for (int i = end - k + 2; i <= end; i++) {
-			(*scores)[i] = scores->at(i - 1);
+			sc[i] = sc[i - 1];
 		}
 	}
+}
+
+/**
+ * The logarithm of every score that fits in the cache below, tabulated.
+ *
+ * takeLog runs over the whole genome four times in a -gnm run -- once while
+ * training and once per strand while scanning -- and a libm log() per base is
+ * a large share of that.  Scores are small counts, so almost all of them fall
+ * inside the table; anything above it still goes through log().  The table
+ * entries are produced by the identical expression, so the tabulated answers
+ * are bit-for-bit what the call would have returned.
+ *
+ * The table is kept across calls because a fragmented assembly can hold
+ * hundreds of thousands of sequences, and rebuilding per sequence would cost
+ * more than it saves.
+ */
+namespace {
+const int LOG_CACHE_SIZE = 1 << 16;
+
+struct LogCache {
+	double logBase;
+	bool isBuilt;
+	vector<int> value;
+
+	LogCache() : logBase(0.0), isBuilt(false) {
+	}
+
+	const int * get(double logBaseIn) {
+		if (!isBuilt || logBase != logBaseIn) {
+			value.resize(LOG_CACHE_SIZE);
+			// Entry 0 is never read: takeLog leaves a score of zero alone.
+			value[0] = 0;
+			for (int i = 1; i < LOG_CACHE_SIZE; i++) {
+				value[i] = (int) ceil(log((double) i) / logBaseIn);
+			}
+			logBase = logBaseIn;
+			isBuilt = true;
+		}
+		return value.data();
+	}
+};
+
+// thread_local so that this stays correct if the per-chromosome work is ever
+// run on more than one thread; the table is read once per takeLog call, not
+// per base, so the TLS access costs nothing measurable.
+thread_local LogCache logCache;
 }
 
 /**
@@ -55,17 +102,22 @@ void Scorer::takeLog(double base) {
 	}
 	double logBase = isOne ? log(1.5) : log(base);
 
+	const int * const logOf = logCache.get(logBase);
+	const int lowest = isOne ? 2 : 1;
+
 	const vector<vector<int> *> * segment = chrom->getSegment();
+	int * const sc = scores->data();
 	for (int s = 0; s < segment->size(); s++) {
 		int start = segment->at(s)->at(0);
 		int end = segment->at(s)->at(1);
 		for (int h = start; h <= end; h++) {
-			int score = scores->at(h);
+			int score = sc[h];
 
-			if (score != 0) {
-				if (!isOne || (isOne && score > 1)) {
-					(*scores)[h] = ceil(log(score) / logBase);
-				}
+			// score == 0 is left alone, and so is score == 1 when the base was
+			// adjusted up from one, exactly as before.
+			if (score >= lowest) {
+				sc[h] = (score < LOG_CACHE_SIZE) ?
+						logOf[score] : (int) ceil(log((double) score) / logBase);
 			}
 		}
 	}
@@ -110,11 +162,12 @@ void Scorer::printScores(string outputFile, bool canAppend) {
 int Scorer::countLessOrEqual(int thr) {
 	int count = 0;
 	const vector<vector<int> *> * segment = chrom->getSegment();
+	const int * const sc = scores->data();
 	for (int s = 0; s < segment->size(); s++) {
 		int start = segment->at(s)->at(0);
 		int end = segment->at(s)->at(1);
 		for (int h = start; h <= end; h++) {
-			if (scores->at(h) <= thr) {
+			if (sc[h] <= thr) {
 				count++;
 			}
 		}
@@ -122,27 +175,43 @@ int Scorer::countLessOrEqual(int thr) {
 	return count;
 }
 
-void Scorer::calculateMax() {
+/**
+ * The constructor used to sweep every scored base to find the maximum, but
+ * nothing ever read it -- getMax() has no caller inside Red.  That sweep was a
+ * whole extra pass over the genome per Scorer, and five Scorers are built over
+ * the course of a -gnm run.  All the pass could actually detect was a
+ * chromosome with nothing scored in it, which is what this checks instead; the
+ * maximum itself is computed on demand.
+ */
+void Scorer::checkNotEmpty() {
 	const vector<vector<int> *> * segmentList = chrom->getSegment();
 	int segmentCount = segmentList->size();
 	for (int jj = 0; jj < segmentCount; jj++) {
 		vector<int> * segment = segmentList->at(jj);
-		int start = segment->at(0);
-		int end = segment->at(1);
-		for (int ss = start; ss <= end; ss++) {
-			int score = scores->at(ss);
-			if (score > max) {
-				max = score;
-			}
+		if (segment->at(1) >= segment->at(0)) {
+			return;
 		}
 	}
 
-	if (max == -1) {
-		string msg("Error occurred while finding the maximum score.");
-		throw InvalidStateException(msg);
-	}
+	string msg("Error occurred while finding the maximum score.");
+	throw InvalidStateException(msg);
 }
 
 int Scorer::getMax() {
+	if (max == -1) {
+		const vector<vector<int> *> * segmentList = chrom->getSegment();
+		int segmentCount = segmentList->size();
+		const int * const sc = scores->data();
+		for (int jj = 0; jj < segmentCount; jj++) {
+			vector<int> * segment = segmentList->at(jj);
+			int start = segment->at(0);
+			int end = segment->at(1);
+			for (int ss = start; ss <= end; ss++) {
+				if (sc[ss] > max) {
+					max = sc[ss];
+				}
+			}
+		}
+	}
 	return max;
 }

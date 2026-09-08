@@ -36,7 +36,7 @@ private:
 
 	/* Methods */
 	void score();
-	void calculateMax();
+	void checkNotEmpty();
 
 public:
 	/* Methods */

@@ -56,6 +56,25 @@ void ChromosomeOneDigit::finalize() {
 	help();
 }
 
+/**
+ * A 256-entry view of the "codes" map, indexed by the byte itself.  The map
+ * lookups it replaces cost two red-black-tree walks per base (count() then
+ * at()), which on a multi-gigabase genome is the single most expensive thing
+ * in the parse.  INVALID_CODE marks a byte with no entry in the map, so the
+ * same InvalidInputException is still thrown for it.
+ */
+const char ChromosomeOneDigit::INVALID_CODE = (char) -1;
+
+void ChromosomeOneDigit::buildCodeTable() {
+	for (int i = 0; i < 256; i++) {
+		codeTable[i] = INVALID_CODE;
+	}
+	for (map<char, char>::const_iterator it = codes->begin();
+			it != codes->end(); it++) {
+		codeTable[(unsigned char) it->first] = it->second;
+	}
+}
+
 void ChromosomeOneDigit::buildCodes() {
 	// Make map
 	codes = new map<char, char>();
@@ -82,6 +101,8 @@ void ChromosomeOneDigit::buildCodes() {
 	codes->insert(map<char, char>::value_type('D', codes->at('T')));
 	codes->insert(map<char, char>::value_type('N', codes->at('C')));
 	codes->insert(map<char, char>::value_type('X', codes->at('G')));
+
+	buildCodeTable();
 }
 
 ChromosomeOneDigit::~ChromosomeOneDigit() {
@@ -94,15 +115,18 @@ ChromosomeOneDigit::~ChromosomeOneDigit() {
  */
 void ChromosomeOneDigit::encodeNucleotides() {
 
+  char * b = &base[0];
+
   for (int s = 0; s < segment->size(); s++) {
     int segStart = segment->at(s)->at(0);
     int segEnd = segment->at(s)->at(1);
     for (int i = segStart; i <= segEnd; i++) {
-      if (codes->count(base[i]) > 0) {
-	base[i] = codes->at(base[i]);
+      char code = codeTable[(unsigned char) b[i]];
+      if (code != INVALID_CODE) {
+	b[i] = code;
       } else {
 	string msg = "Invalid nucleotide: ";
-	msg.append(1, base[i]);
+	msg.append(1, b[i]);
 	throw InvalidInputException(msg);
       }
     }
@@ -117,10 +141,11 @@ void ChromosomeOneDigit::encodeNucleotides() {
 
     for (int s = 0; s <= segNum; s++) {      
       for (int i = segStart; i <= segEnd; i++) {
-	char c = base[i];
+	char c = b[i];
 	if(c != 'N'){
-	  if (codes->count(c) > 0) {
-	    base[i] = codes->at(c);
+	  char code = codeTable[(unsigned char) c];
+	  if (code != INVALID_CODE) {
+	    b[i] = code;
 	  } else {
 	    string msg = "Invalid nucleotide: ";
 	    msg.append(1, c);
@@ -180,25 +205,31 @@ void ChromosomeOneDigit::makeRC() {
 }
 
 void ChromosomeOneDigit::makeComplement() {
-	map<char, char> complement;
+	// A byte table rather than a map, for the same reason as codeTable: this
+	// runs once per base per strand, twice per sequence in the scan stage.
+	char complement[256];
+	for (int i = 0; i < 256; i++) {
+		complement[i] = INVALID_CODE;
+	}
 
 	// Certain nucleotides
-	complement.insert(map<char, char>::value_type((char) 0, (char) 3));
-	complement.insert(map<char, char>::value_type((char) 1, (char) 2));
-	complement.insert(map<char, char>::value_type((char) 2, (char) 1));
-	complement.insert(map<char, char>::value_type((char) 3, (char) 0));
+	complement[0] = (char) 3;
+	complement[1] = (char) 2;
+	complement[2] = (char) 1;
+	complement[3] = (char) 0;
 
 	// Unknown nucleotide
-	complement.insert(map<char, char>::value_type('N', 'N'));
-	// complement.insert(map<char, char>::value_type((char) 4, (char) 4));
+	complement[(unsigned char) 'N'] = 'N';
 
 	// Convert a sequence to its complement
-	int seqLen = base.size();
-	for (int i = 0; i < seqLen; i++) {
-		if (complement.count(base[i]) > 0) {
-			base[i] = complement.at(base[i]);
+	size_t seqLen = base.size();
+	char * b = &base[0];
+	for (size_t i = 0; i < seqLen; i++) {
+		char c = complement[(unsigned char) b[i]];
+		if (c != INVALID_CODE) {
+			b[i] = c;
 		} else {
-			cerr << "Error: The digit " << (char) base[i];
+			cerr << "Error: The digit " << (char) b[i];
 			cerr << " does not represent a base." << endl;
 			exit(2);
 		}
@@ -206,15 +237,16 @@ void ChromosomeOneDigit::makeComplement() {
 }
 
 void ChromosomeOneDigit::makeReverse() {
-	int last = base.size() - 1;
+	size_t last = base.size() - 1;
 
 	// Last index to be switched
-	int middle = base.size() / 2;
+	size_t middle = base.size() / 2;
 
-	for (int i = 0; i < middle; i++) {
-		char temp = base[last - i];
-		base[last - i] = base[i];
-		base[i] = temp;
+	char * b = &base[0];
+	for (size_t i = 0; i < middle; i++) {
+		char temp = b[last - i];
+		b[last - i] = b[i];
+		b[i] = temp;
 	}
 }
 

@@ -59,15 +59,32 @@ Scanner::Scanner(HMM * hmmIn, int kIn, ChromosomeOneDigit * chromIn,
 }
 
 Scanner::~Scanner() {
-	if (scorer == NULL) {
-		scoreList->clear();
-		delete scoreList;
-	} else {
-		delete scorer;
-	}
+	releaseScores();
 
 	Util::deleteInVector(regionList);
 	delete regionList;
+}
+
+/**
+ * Free the per-base score array; only the regions are wanted after start().
+ *
+ * The forward-strand Scanner is kept alive while the reverse complement and the
+ * reverse are scanned, so its four-bytes-per-base scores would otherwise sit in
+ * memory next to theirs -- eight bytes per base of the longest sequence, which
+ * on a multi-gigabase chromosome is tens of gigabytes.  printScores is the only
+ * thing that still needs the scores and it has no caller, so releasing them as
+ * soon as scanning is done costs nothing.
+ */
+void Scanner::releaseScores() {
+	if (scorer != NULL) {
+		// The Scorer owns scoreList.
+		delete scorer;
+		scorer = NULL;
+	} else if (scoreList != NULL) {
+		scoreList->clear();
+		delete scoreList;
+	}
+	scoreList = NULL;
 }
 
 void Scanner::start() {
@@ -166,34 +183,44 @@ int Scanner::extendByKHelper(int segStart, int segEnd, int firstCandIndex) {
 	return lastCandIndex;
 }
 
+/**
+ * Collapse overlapping neighbours in the (sorted) region list.
+ *
+ * This used to erase the absorbed region from the middle of the vector, which
+ * shifts everything after it.  On a repeat-rich chromosome the list holds
+ * millions of regions and a large fraction of them merge -- extendByK widens
+ * every one of them by k-1 first -- so the shifting alone was quadratic.  The
+ * same merges are done here by compacting in place: one forward pass, each
+ * surviving region written to its final slot.
+ */
 void Scanner::merge() {
-	int regionCount = regionList->size();
-	int gg = 0;
-	while (gg < regionCount) {
-		ILocation * region = regionList->at(gg);
+	const int regionCount = regionList->size();
+	if (regionCount == 0) {
+		return;
+	}
 
+	int write = 0;
+	for (int read = 1; read < regionCount; read++) {
+		ILocation * kept = (*regionList)[write];
+		ILocation * region = (*regionList)[read];
+
+		int pStart = kept->getStart();
+		int pEnd = kept->getEnd();
 		int regionStart = region->getStart();
 		int regionEnd = region->getEnd();
 
-		if (gg > 0) {
-			ILocation * pRegion = regionList->at(gg - 1);
-			int pStart = pRegion->getStart();
-			int pEnd = pRegion->getEnd();
-
-			if (Util::isOverlapping(pStart, pEnd, regionStart, regionEnd)) {
-				pRegion->setEnd(regionEnd > pEnd ? regionEnd : pEnd);
-				regionList->erase(regionList->begin() + gg);
-				delete region;
-				regionCount = regionList->size();
-			} else {
-				gg++;
+		if (Util::isOverlapping(pStart, pEnd, regionStart, regionEnd)) {
+			if (regionEnd > pEnd) {
+				kept->setEnd(regionEnd);
 			}
-		}
-
-		if (gg == 0) {
-			gg++;
+			delete region;
+		} else {
+			write++;
+			(*regionList)[write] = region;
 		}
 	}
+
+	regionList->resize(write + 1);
 }
 
 void Scanner::mergeWithOtherRegions(const vector<ILocation *> * otherList) {
@@ -203,6 +230,8 @@ void Scanner::mergeWithOtherRegions(const vector<ILocation *> * otherList) {
 	int j = 0;
 	int iLimit = regionList->size();
 	int jLimit = otherList->size();
+
+	mergedList->reserve(iLimit + jLimit);
 
 	// Continue until one list is finished
 	while (i < iLimit && j < jLimit) {
@@ -327,19 +356,22 @@ void Scanner::printIndex(string outputFile, bool canAppend, int frmt) {
 	// Write the index of the repeat segment [x,y[
 	string header = chrom->getHeader();
 
+	// "\n" rather than endl: endl flushes, and flushing once per region turns
+	// a few large writes into one syscall per line.  The stream is still
+	// flushed and checked below.
 	if(frmt == FRMT_POS){
 		for (int j = 0; j < regionList->size(); j++) {
 			outIndex << header << ":";
 			outIndex << ((int) (regionList->at(j)->getStart())) << "-";
 			outIndex << ((int) (regionList->at(j)->getEnd() + 1));
-			outIndex << endl;
+			outIndex << "\n";
 		}
 	}else if(frmt == FRMT_BED){
 		for (int j = 0; j < regionList->size(); j++) {
 			outIndex << header << "\t";
 			outIndex << ((int) (regionList->at(j)->getStart())) << "\t";
 			outIndex << ((int) (regionList->at(j)->getEnd() + 1));
-			outIndex << endl;
+			outIndex << "\n";
 		}
 	}
 
@@ -349,17 +381,21 @@ void Scanner::printIndex(string outputFile, bool canAppend, int frmt) {
 	Util::checkStream(outIndex, outputFile, "close");
 }
 
+/**
+ * A byte-indexed stand-in for tolower(), for the same reason Chromosome has one
+ * for toupper(): it runs once per masked base.
+ */
+static const char * makeLowerTable() {
+	static char t[256];
+	for (int i = 0; i < 256; i++) {
+		t[i] = (i >= 'A' && i <= 'Z') ? (char) (i - 'A' + 'a') : (char) i;
+	}
+	return t;
+}
+static const char * const LOWER_TABLE = makeLowerTable();
+
 void Scanner::printMasked(string outputFile, Chromosome& oChrom,
 		bool canAppend) {
-
-	string baseCopy = *(oChrom.getBase());
-	int regionCount = regionList->size();
-	for (int j = 0; j < regionCount; j++) {
-		for (int h = regionList->at(j)->getStart();
-				h <= regionList->at(j)->getEnd(); h++) {
-			baseCopy[h] = tolower(baseCopy[h]);
-		}
-	}
 
 	ofstream outMask;
 
@@ -371,15 +407,58 @@ void Scanner::printMasked(string outputFile, Chromosome& oChrom,
 
 	Util::checkStream(outMask, outputFile, "open");
 
-	outMask << oChrom.getHeader() << endl;
-	int step = 50;
-	int len = baseCopy.size();
+	// This used to copy the whole chromosome so it could be lower-cased in
+	// place -- a second full-length string on top of the two copies of the
+	// genome the scan already holds -- and then push the result out one
+	// character at a time, ending every 50-base line with endl.  endl flushes,
+	// so that was a write syscall every 50 bases.
+	//
+	// Instead the sorted, disjoint region list is walked in step with the
+	// output, and complete blocks of lines are handed to the stream at once.
+	const string & original = *(oChrom.getBase());
+	const char * const src = original.data();
+	const int len = original.size();
+	const int step = 50;
+
+	string header = oChrom.getHeader();
+	outMask.write(header.data(), header.size());
+	outMask.put('\n');
+
+	const int LINES_PER_BLOCK = 1024;
+	string buffer;
+	buffer.reserve((size_t) LINES_PER_BLOCK * (step + 1));
+
+	const int regionCount = regionList->size();
+	int regionIndex = 0;
+	int curStart = (regionCount > 0) ? regionList->at(0)->getStart() : len;
+	int curEnd = (regionCount > 0) ? regionList->at(0)->getEnd() : len;
+
+	int lineCount = 0;
 	for (int i = 0; i < len; i = i + step) {
 		int e = (i + step - 1 > len - 1) ? len - 1 : i + step - 1;
 		for (int k = i; k <= e; k++) {
-			outMask << baseCopy[k];
+			while (k > curEnd && regionIndex + 1 < regionCount) {
+				regionIndex++;
+				curStart = regionList->at(regionIndex)->getStart();
+				curEnd = regionList->at(regionIndex)->getEnd();
+			}
+			char c = src[k];
+			if (k >= curStart && k <= curEnd) {
+				c = LOWER_TABLE[(unsigned char) c];
+			}
+			buffer.push_back(c);
 		}
-		outMask << endl;
+		buffer.push_back('\n');
+
+		if (++lineCount == LINES_PER_BLOCK) {
+			outMask.write(buffer.data(), buffer.size());
+			buffer.clear();
+			lineCount = 0;
+		}
+	}
+
+	if (!buffer.empty()) {
+		outMask.write(buffer.data(), buffer.size());
 	}
 	// a failed write only shows up in the stream state, and the buffer is not
 	// necessarily handed to the OS until the flush and the close, so all three

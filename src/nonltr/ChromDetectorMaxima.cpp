@@ -83,7 +83,8 @@ void ChromDetectorMaxima::printIndex(string outputFile, bool canAppend) {
 		outIndex << header << ":";
 		outIndex << ((int) (regionList->at(j)->getStart())) << "-";
 		outIndex << ((int) (regionList->at(j)->getEnd() + 1)) << " ";
-		outIndex << endl;
+		// "\n" rather than endl: endl flushes, once per region.
+		outIndex << "\n";
 	}
 
 	outIndex.flush();

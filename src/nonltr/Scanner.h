@@ -61,6 +61,7 @@ public:
 	void makeForwardCoordinates();
 
 	void printScores(string, bool);
+	void releaseScores();
 	void printIndex(string, bool, int);
 	void printMasked(string, Chromosome&, bool);
 	void mergeWithOtherRegions(const vector<ILocation *> *);

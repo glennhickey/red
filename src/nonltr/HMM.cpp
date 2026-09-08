@@ -482,118 +482,101 @@ double HMM::decode(int rStart, int rEnd, vector<int> * scoreListIn,
 	Location check(rStart, rEnd);
 	// End check
 
-	vector<vector<double> > v(stateNumber);
-	int size = rEnd - rStart + 1;
-	for (int i = 0; i < stateNumber; i++) {
-		v[i] = vector<double>(size, minusInf);
-	}
+	const int size = rEnd - rStart + 1;
 
-	vector<vector<int> > p(stateNumber);
-	for (int i = 0; i < stateNumber; i++) {
-		p[i] = vector<int>(size, -1);
-	}
+	// Only two states are reachable at any position.  The score at a position
+	// picks out one positive state and one negative state, and every other
+	// entry of the Viterbi matrix keeps the -infinity it was initialised with
+	// for the whole run.  Materialising the full stateNumber x size matrix of
+	// values and back pointers therefore allocated and touched about
+	// 12 * stateNumber bytes per base -- several hundred megabytes for one
+	// one-megabase segment, repeated for every segment of every strand -- to
+	// carry two useful numbers per column.  The values now live in scalars and
+	// the back pointers in two bits per position:
+	//
+	//   bit 0: the predecessor of this position's positive state was the
+	//          previous position's negative state.
+	//   bit 1: the predecessor of this position's negative state was the
+	//          previous position's negative state.
+	vector<unsigned char> backPtr(size, 0);
 
-	// Initialize
-	int firstPstvState = getPstvState(rStart);
-	int firstNgtvState = positiveStateNumber + firstPstvState;
-	v[firstPstvState][0] = pList->at(firstPstvState);
-	v[firstNgtvState][0] = pList->at(firstNgtvState);
+	const int * const scores = scoreList->data();
+	const double * const priors = pList->data();
+
+	int prevPstvState = scores[rStart];
+	double prevPstvValue = priors[prevPstvState];
+	double prevNgtvValue = priors[positiveStateNumber + prevPstvState];
 
 	// Recurs
 	for (int i = rStart + 1; i <= rEnd; i++) {
-		int vIndex = i - rStart;
+		const int pPstvState = prevPstvState;
+		const int pNgtvState = positiveStateNumber + pPstvState;
+		const int cPstvState = scores[i];
+		const int cNgtvState = positiveStateNumber + cPstvState;
 
-		// Obtain states from scores
-		int pPstvState = getPstvState(i - 1);
-		int pNgtvState = positiveStateNumber + pPstvState;
-		int cPstvState = getPstvState(i);
-		int cNgtvState = positiveStateNumber + cPstvState;
+		const double * const fromPstv = (*tList)[pPstvState]->data();
+		const double * const fromNgtv = (*tList)[pNgtvState]->data();
+
+		unsigned char flags = 0;
 
 		// Set positive state
-		double p1 = v[pPstvState][vIndex - 1]
-				+ (*(*tList)[pPstvState])[cPstvState];
-		double p2 = v[pNgtvState][vIndex - 1]
-				+ (*(*tList)[pNgtvState])[cPstvState];
+		double p1 = prevPstvValue + fromPstv[cPstvState];
+		double p2 = prevNgtvValue + fromNgtv[cPstvState];
+		double cPstvValue;
 		if (p1 > p2) {
-			v[cPstvState][vIndex] = p1;
-			p[cPstvState][vIndex] = pPstvState;
+			cPstvValue = p1;
 		} else {
-			v[cPstvState][vIndex] = p2;
-			p[cPstvState][vIndex] = pNgtvState;
+			cPstvValue = p2;
+			flags |= 1;
 		}
 
 		// Set negative state
-		double p3 = v[pPstvState][vIndex - 1]
-				+ (*(*tList)[pPstvState])[cNgtvState];
-		double p4 = v[pNgtvState][vIndex - 1]
-				+ (*(*tList)[pNgtvState])[cNgtvState];
+		double p3 = prevPstvValue + fromPstv[cNgtvState];
+		double p4 = prevNgtvValue + fromNgtv[cNgtvState];
+		double cNgtvValue;
 		if (p3 > p4) {
-			v[cNgtvState][vIndex] = p3;
-			p[cNgtvState][vIndex] = pPstvState;
+			cNgtvValue = p3;
 		} else {
-			v[cNgtvState][vIndex] = p4;
-			p[cNgtvState][vIndex] = pNgtvState;
+			cNgtvValue = p4;
+			flags |= 2;
 		}
+
+		backPtr[i - rStart] = flags;
+		prevPstvState = cPstvState;
+		prevPstvValue = cPstvValue;
+		prevNgtvValue = cNgtvValue;
 	}
 
-	// Decode
-	int lastBestState = 0;
-	double lastBestValue = v[0][size - 1];
-	for (int i = 1; i < stateNumber; i++) {
-		double currentValue = v[i][size - 1];
-		if (currentValue > lastBestValue) {
-			lastBestState = i;
-			lastBestValue = currentValue;
-		}
+	// Decode.  The original swept all stateNumber entries of the last column
+	// for the maximum; every entry but the two reachable ones is -infinity, and
+	// the sweep broke ties towards the lower index, which is always the
+	// positive state of the pair.
+	int lastBestState;
+	double lastBestValue;
+	if (prevNgtvValue > prevPstvValue) {
+		lastBestState = positiveStateNumber + prevPstvState;
+		lastBestValue = prevNgtvValue;
+	} else {
+		lastBestState = prevPstvState;
+		lastBestValue = prevPstvValue;
 	}
 
 	int stateListOriginalSize = stateList.size();
-	for (int i = stateListOriginalSize; i < stateListOriginalSize + size; i++) {
-		stateList.push_back(-1);
-	}
+	stateList.resize(stateListOriginalSize + size);
 
 	stateList[stateListOriginalSize + size - 1] = lastBestState;
+	bool isNgtv = (lastBestState >= positiveStateNumber);
 	for (int i = size - 1; i > 0; i--) {
-		lastBestState = p[lastBestState][i];
+		const unsigned char flags = backPtr[i];
+		isNgtv = isNgtv ? ((flags & 2) != 0) : ((flags & 1) != 0);
+		const int pPstvState = scores[rStart + i - 1];
+		lastBestState = isNgtv ? (positiveStateNumber + pPstvState) : pPstvState;
 		stateList[stateListOriginalSize + i - 1] = lastBestState;
 	}
 
-	// Make sure that no state in the results has the value of -1
-	for (int i = stateListOriginalSize; i < stateListOriginalSize + size; i++) {
-		if (stateList[i] == -1) {
-			string msg("At least one state was not determined properly.");
-			throw InvalidStateException(msg);
-		}
-	}
+	// Every position is written above, so the check that no state was left at
+	// -1 -- another full pass over the segment -- can no longer fail.
 
-	// Test - start
-	/*
-	 bool canPrint = false;
-	 for (int i = stateListOriginalSize; i < stateListOriginalSize + size; i++) {
-	 if (stateList.at(i) >= positiveStateNumber) {
-	 canPrint = true;
-	 }
-	 }
-	 if (canPrint) {
-	 for (int i = rStart; i <= rEnd; i++) {
-	 cout << scoreList->at(i) << " ";
-	 }
-	 cout << endl;
-
-	 for (int i = stateListOriginalSize; i < stateListOriginalSize + size;
-	 i++) {
-	 if (stateList.at(i) < positiveStateNumber) {
-	 cout << "+";
-	 } else {
-	 cout << "-";
-	 //cout << stateList.at(i) << " ";
-	 }
-	 }
-	 cout << endl;
-	 }
-	 */
-
-	// Test - end
 	return lastBestValue;
 }
 

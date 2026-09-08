@@ -102,23 +102,28 @@ void Trainer::stage2() {
 
 	double effectiveSize = 0.0;
 	double countLessOrEqual = 0.0;
+
+	// One sequence in memory at a time rather than the whole file at once.
+	string header;
+	string seq;
+	bool hadSequence = false;
+
 	for (int i = 0; i < chromCount; i++) {
 		cout << "Calculating the percentage in: " << fileList->at(i) << " ...";
 		cout << endl;
-		ChromListMaker * maker = new ChromListMaker(fileList->at(i));
-		const vector<Chromosome *> * chromList = maker->makeChromOneDigitList();
+		ChromListMaker maker(fileList->at(i));
 
-		for (int h = 0; h < chromList->size(); h++) {
-			ChromosomeOneDigit * chrom =
-					dynamic_cast<ChromosomeOneDigit *>(chromList->at(h));
+		while (maker.nextSequence(header, seq, hadSequence)) {
+			ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(
+					header, seq, hadSequence);
 			Scorer * scorer = new Scorer(chrom, table);
 
 			effectiveSize += chrom->getEffectiveSize();
 			countLessOrEqual += scorer->countLessOrEqual(t);
 
 			delete scorer;
+			delete chrom;
 		}
-		delete maker;
 	}
 
 	if (effectiveSize == 0) {
@@ -194,12 +199,17 @@ void Trainer::stage3() {
 			f1.close();
 		}
 
-		// Read sequences in the file
-		ChromListMaker * maker = new ChromListMaker(fileList->at(i));
-		const vector<Chromosome *> * chromList = maker->makeChromOneDigitList();
+		// Read sequences in the file, one at a time
+		ChromListMaker maker(fileList->at(i));
+		string header;
+		string seq;
+		bool hadSequence = false;
+		int h = -1;
 
-		for (int h = 0; h < chromList->size(); h++) {
-			ChromosomeOneDigit * chrom = dynamic_cast<ChromosomeOneDigit *>(chromList->at(h));
+		while (maker.nextSequence(header, seq, hadSequence)) {
+			h++;
+			ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(
+					header, seq, hadSequence);
 			Scorer * scorer = new Scorer(chrom, table);
 			vector<int> * scoreList = scorer->getScores();
 
@@ -253,12 +263,12 @@ void Trainer::stage3() {
 				delete detector;
 			}
 			delete scorer;
+			delete chrom;
 		}
 
 		if (isCON && isConRepAvailable) {
 			delete otherRegionListCollection;
 		}
-		delete maker;
 	}
 
 	// Normalize HMM's once training is finished
