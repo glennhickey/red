@@ -121,8 +121,6 @@ void EnrichmentMarkovView<I, V>::generateProbapilities() {
  * are asked about is a shift and a mask of y, and no string, no hashing, and
  * no allocation is needed.  The arithmetic and the order of the multiplications
  * are unchanged.
- *
- * One quirk of the old loop is reproduced deliberately, see shiftPoint below.
  */
 template<class I, class V>
 void EnrichmentMarkovView<I, V>::processTable() {
@@ -135,20 +133,6 @@ void EnrichmentMarkovView<I, V>::processTable() {
 	const int resultsSize = kLen - o - 1;
 	const int wordMask = (1 << (2 * (o + 1))) - 1;
 
-	// The old loop kept the key as a quaternary string and, just before
-	// incrementing it, "guarded against overflow" by prepending a zero digit
-	// whenever the leading digit had reached 3.  The string is k digits long,
-	// so that fires the first time y reaches 3 * 4^(k-1) -- and from then on
-	// the string is k+1 digits, while every lookup still read the first k of
-	// them.  So for the whole last quarter of the table the background models
-	// were queried about a zero followed by all but the last base of the key:
-	// the key shifted right by one digit.
-	//
-	// That is a bug, but it decides which k-mers Red calls enriched, and so
-	// what it ends up masking.  Changing it would change Red's output, which
-	// is not what a speed-up should do, so it is reproduced exactly here.
-	const I shiftPoint = ((I) 3) << (2 * (kLen - 1));
-
 	double lowerP = 1.0;
 	double upperP = 1.0;
 
@@ -159,9 +143,6 @@ void EnrichmentMarkovView<I, V>::processTable() {
 			cout << endl;
 		}
 
-		// The key the background models are actually asked about.
-		const I yEff = (y <= shiftPoint) ? y : (y >> 2);
-
 		// Calculate the expected number of occurrences.
 		//
 		// Both probabilities depend only on the first k-1 digits, so they are
@@ -171,7 +152,7 @@ void EnrichmentMarkovView<I, V>::processTable() {
 			lowerP = 1.0;
 			for (int m = 0; m < modelNumber - 1; m++) {
 				// The first m+1 digits of y.
-				int prefix = (int) (yEff >> (2 * (kLen - m - 1)));
+				int prefix = (int) (y >> (2 * (kLen - m - 1)));
 				lowerP *= (((double) modelList->at(m)->valueOf(prefix))
 						/ factor);
 			}
@@ -180,13 +161,13 @@ void EnrichmentMarkovView<I, V>::processTable() {
 			// windows of o+1 bases starting at 0 .. resultsSize-1.
 			upperP = 1.0;
 			for (int i = 0; i < resultsSize; i++) {
-				int word = (int) ((yEff >> (2 * (kLen - i - o - 1))) & wordMask);
+				int word = (int) ((y >> (2 * (kLen - i - o - 1))) & wordMask);
 				upperP *= (((double) oTable->valueOf(word)) / factor);
 			}
 		}
 
 		// The last window of o+1 bases, i.e. the one starting at resultsSize.
-		const int lastWord = (int) (yEff & wordMask);
+		const int lastWord = (int) (y & wordMask);
 
 		// The expected number of occurances
 		double exp = l * lowerP * upperP
