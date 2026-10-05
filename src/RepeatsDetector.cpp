@@ -18,6 +18,8 @@
 #include "nonltr/HMM.h"
 #include "nonltr/Scanner.h"
 #include "nonltr/ChromListMaker.h"
+#include "nonltr/Scorer.h"
+#include "nonltr/SketchMasker.h"
 #include "utility/Util.h"
 
 using namespace std;
@@ -38,6 +40,9 @@ const static string GAU_PRM = string("-gau"); // Half width of the Gaussian mask
 const static string THR_PRM = string("-thr"); // The threshold part of the definition of non-repeats
 const static string MIN_PRM = string("-min"); // The minimum number of observations
 const static string CAP_PRM = string("-cap"); // Also mask k-mers counted above this percentile
+const static string SKT_PRM = string("-sketch"); // 1: also mask seeds that are high-copy across the genome
+// Set by main, never by the user: no record has anything Red can score, so there is nothing to train on
+const static string NOS_PRM = string("--no-scorable-sequence");
 
 // Scan using pre-calculated scores and a trained HMM
 const static string HMI_PRM = string("-hmi"); // File including the trained model
@@ -55,6 +60,19 @@ const static string MSK_PRM = string("-msk"); // Write masked sequence(s) to fil
 const static string RPT_PRM = string("-rpt"); // Write coordinates to file or directory
 const static string DIR_PRM = string("-dir"); // Read additional sequences(.fa) or scores (.sc) under directory
 const static string FRM_PRM = string("-frm"); // Format of the ouput
+
+// An empty record has no sequence to scan or mask, but stays in the masked output so that it lists the
+// same records as the input.
+static void printEmptyRecord(const string & file, const string & header, bool canAppend) {
+  ofstream out;
+  out.open(file.c_str(), canAppend ? ios::out | ios::app : ios::out);
+  Util::checkStream(out, file, "open");
+  out << header << "\n";
+  out.flush();
+  Util::checkStream(out, file, "write to");
+  out.close();
+  Util::checkStream(out, file, "close");
+}
 
 void drive(map<string, string> * const param) {
   // Delete old output files
@@ -114,23 +132,39 @@ void drive(map<string, string> * const param) {
     }
     
     
+    // No record has anything to score (all are empty, all N, or without a 20-base run of bases): there
+    // is nothing to train on, and every record is written out unmasked.
+    const bool noScorable = param->count(NOS_PRM) > 0;
+
+    // The sketch counts the genome before Red builds its own table, and frees its table before Red
+    // allocates one, so it does not add to the peak memory.
+    vector<string> sketchFiles;
+    Util::readChromList(genomeDir, &sketchFiles, string("fa"));
+    SketchMasker * sketch = NULL;
+    if (param->count(SKT_PRM) > 0 && param->at(SKT_PRM) == "1" && !noScorable) {
+      sketch = new SketchMasker(sketchFiles);
+    }
+
     // This part or the next
-    Trainer * trainer;
-    if (param->count(CND_PRM) > 0) {
+    Trainer * trainer = NULL;
+    if (noScorable) {
+      cout << "No record has a run of 20 or more bases without an N: nothing to train on, ";
+      cout << "so the sequences are written out unmasked." << endl;
+    } else if (param->count(CND_PRM) > 0) {
       trainer = new Trainer(genomeDir, order, k, s, t, param->at(CND_PRM), minObs, capPct);
     } else {
       trainer = new Trainer(genomeDir, order, k, s, t, minObs, capPct);
     }
-    const bool hasCap = trainer->getBuilder()->hasCap();
+    const bool hasCap = trainer != NULL && trainer->getBuilder()->hasCap();
     
     
-    if (param->count(TBL_PRM)) {
+    if (trainer != NULL && param->count(TBL_PRM)) {
       cout << "Printing the count of the kmer's to: ";
       cout << param->at(TBL_PRM) << endl;
       trainer->printTable(param->at(TBL_PRM));
     }
     
-    if (param->count(HMO_PRM) > 0) {
+    if (trainer != NULL && param->count(HMO_PRM) > 0) {
       cout << "Printing the HMM to: " << endl;
       cout << param->at(HMO_PRM) << endl;
       trainer->printHmm(param->at(HMO_PRM));
@@ -168,14 +202,54 @@ void drive(map<string, string> * const param) {
       string seq;
       bool hadSequence = false;
       int h = -1;
+      // Whether each output of this file has been started, which with skipped records is not the
+      // same as being past the first record.
+      bool wroteMsk = false;
+      bool wroteRpt = false;
+      bool wroteSco = false;
+      string mskFile = param->count(MSK_PRM) > 0 ? param->at(MSK_PRM) + Util::fileSeparator + nickName + ".msk" : "";
+      string rptFile = param->count(RPT_PRM) > 0 ? param->at(RPT_PRM) + Util::fileSeparator + nickName + ".rpt" : "";
 
       while (maker.nextSequence(header, seq, hadSequence)) {
 	h++;
+
+	// The sketch's regions of this record; the files of -dir were not counted, so have none.
+	vector<ILocation *> sketchRegions;
+	if (sketch != NULL && i < (int) sketchFiles.size()) {
+	  sketch->getRegions(i, h, &sketchRegions);
+	}
+
+	if (!hadSequence) {
+	  if (param->count(MSK_PRM) > 0) {
+	    printEmptyRecord(mskFile, header, wroteMsk);
+	    wroteMsk = true;
+	  }
+	  continue;
+	}
+
 	ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(header,
 									seq, hadSequence);
 	Chromosome * oChrom = nullptr;
 	if (param->count(MSK_PRM) > 0) {
 	  oChrom = ChromListMaker::makeChrom(header, seq, hadSequence);
+	}
+
+	// A record with nothing to score (all N, or no run of 20 bases without an N) would make Red's
+	// Scorer throw, and has nothing Red could mask.  It is written out with the sketch's regions only.
+	if (trainer == NULL || !Scorer::hasScorableSegment(chrom)) {
+	  if (param->count(RPT_PRM) > 0) {
+	    Scanner::printIndexRegions(rptFile, chrom->getHeader(), &sketchRegions, wroteRpt,
+				       atoi(param->at(FRM_PRM).c_str()));
+	    wroteRpt = true;
+	  }
+	  if (param->count(MSK_PRM) > 0) {
+	    Scanner::printMaskedRegions(mskFile, *oChrom, &sketchRegions, wroteMsk);
+	    wroteMsk = true;
+	  }
+	  Util::deleteInVector(&sketchRegions);
+	  delete oChrom;
+	  delete chrom;
+	  continue;
 	}
 	
 	// Scan the forward strand.  Its scores are of no further use once the
@@ -212,41 +286,44 @@ void drive(map<string, string> * const param) {
 	  scanner->mergeWithOtherRegions(&capRegions);
 	  Util::deleteInVector(&capRegions);
 	}
+	if (!sketchRegions.empty()) {
+	  scanner->mergeWithOtherRegions(&sketchRegions);
+	}
+	Util::deleteInVector(&sketchRegions);
 
 	//@@ The chromosome now has the sequence of the reverse strand
 	// The actual strand is calculated if the user requested the scores.
 	
 	// Print according to the user's requests
-	bool canAppend = (h == 0) ? false : true;
-	
 	if (param->count(SCO_PRM) > 0) {
 	  // Calculate the forward strand from the reverse
 	  chrom->makeR();
 	  
 	  string scoFile = param->at(SCO_PRM) + Util::fileSeparator + nickName + ".scr";
-	  if (!canAppend) {
+	  if (!wroteSco) {
 	    cout << "Printing scores to: " << scoFile << endl;
 	  }
 	  // Make sure to print the original E-values not their logarithm
 	  Scorer * scorer = new Scorer(chrom, trainer->getTable());
-	  scorer->printScores(scoFile, canAppend);
+	  scorer->printScores(scoFile, wroteSco);
+	  wroteSco = true;
 	  delete scorer;
 	}
 	
 	if (param->count(RPT_PRM) > 0) {
-	  string rptFile = param->at(RPT_PRM) + Util::fileSeparator + nickName + ".rpt";
-	  if (!canAppend) {
+	  if (!wroteRpt) {
 	    cout << "Printing locations to: " << rptFile << endl;
 	  }
-	  scanner->printIndex(rptFile, canAppend, atoi(param->at(FRM_PRM).c_str()));
+	  scanner->printIndex(rptFile, wroteRpt, atoi(param->at(FRM_PRM).c_str()));
+	  wroteRpt = true;
 	}
 	
 	if (param->count(MSK_PRM) > 0) {
-	  string mskFile = param->at(MSK_PRM) + Util::fileSeparator + nickName + ".msk";
-	  if (!canAppend) {
+	  if (!wroteMsk) {
 	    cout << "Printing masked sequence to: " << mskFile << endl;
 	  }
-	  scanner->printMasked(mskFile, *oChrom, canAppend);
+	  scanner->printMasked(mskFile, *oChrom, wroteMsk);
+	  wroteMsk = true;
 	}
 	
 	// Free memory
@@ -260,6 +337,7 @@ void drive(map<string, string> * const param) {
     fileList->clear();
     delete fileList;
     delete trainer;
+    delete sketch;
   } else if (param->count(HMI_PRM) > 0) {
     HMM * hmm = new HMM(param->at(HMI_PRM));
     
@@ -316,6 +394,8 @@ int main(int argc, char * argv[]) {
   message.append("\t-min the minimum number of the observed k-mers. The default is 3.\n");
   message.append("\t-cap also mask every k-mer whose count, both strands pooled, is above this percentile\n");
   message.append("\t\tof the counts of the distinct k-mers in the genome, e.g. 99.8.  Optional; off by default.\n");
+  message.append("\t-sketch 1 also masks sequence whose 16-mers or 32-base purine/pyrimidine patterns are high-copy\n");
+  message.append("\t\tacross the genome, from count sketches.  Thresholds scale with genome size.  0 (default) or 1.\n");
   message.append("\t-tbl file where the table of the adjusted counts is written, optional.\n");
   message.append("\t-sco directory where scores are saved, optional.\n");
   message.append("\t\tScore files have the \".scr\" extension.\n");
@@ -357,6 +437,7 @@ int main(int argc, char * argv[]) {
   validParam.insert(map<string, string>::value_type(DIR_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(MIN_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(CAP_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(SKT_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(FRM_PRM, "DUMMY"));
 
   // Make a table of the user provided arguments
@@ -385,6 +466,7 @@ int main(int argc, char * argv[]) {
     // let both defaults use the result.
     long genomeLength = 0;
     long genomeGc = 0;
+    bool anyScorable = false;
     if (param->count(GNM_PRM) > 0
 	&& (param->count(LEN_PRM) == 0 || param->count(GAU_PRM) == 0)) {
       vector<string> * fileList = new vector<string>();
@@ -402,28 +484,37 @@ int main(int argc, char * argv[]) {
       for (int i = 0; i < fileList->size(); i++) {
 	ChromListMaker maker(fileList->at(i));
 	while (maker.nextSequence(header, seq, hadSequence)) {
+	  // an empty record cannot be made into a chromosome
+	  if (!hadSequence) {
+	    continue;
+	  }
 	  Chromosome * chrom = ChromListMaker::makeChrom(header, seq,
 							 hadSequence);
 	  genomeLength += chrom->getEffectiveSize();
 	  genomeGc += chrom->getGcContent();
+	  anyScorable = anyScorable || Scorer::hasScorableSegment(chrom);
 	  delete chrom;
 	}
       }
       fileList->clear();
       delete fileList;
+      // Nothing to train on: drive() then writes every record out unmasked rather than failing
+      if (!anyScorable) {
+	param->insert(map<string, string>::value_type(NOS_PRM, "1"));
+      }
     }
 
     if (param->count(LEN_PRM) == 0) {
       if (param->count(GNM_PRM) > 0) {
-	// Check for zero genome length to avoid log(0)
-	if (genomeLength == 0) {
+	// Check for zero genome length to avoid log(0).  With nothing scorable, k is never used.
+	if (genomeLength == 0 && param->count(NOS_PRM) == 0) {
 	  cerr << "Error: Genome length is zero. Cannot calculate k-mer length." << endl;
 	  cerr << message << endl;
 	  delete param;
 	  return 1;
 	}
 
-	double temp = log(genomeLength) / log(4.0);
+	double temp = genomeLength > 0 ? log(genomeLength) / log(4.0) : 0.0;
 
 	int k = floor(temp);
 	cout << "The recommended k is " << k << "." << endl;
@@ -510,6 +601,13 @@ int main(int argc, char * argv[]) {
 	  cerr << message << endl;
 	  return 1;
 	}
+      }
+
+      if (param->count(SKT_PRM) > 0 && param->at(SKT_PRM) != "0" && param->at(SKT_PRM) != "1") {
+	cerr << "The sketch option is 0 (off) or 1 (on).";
+	cerr << endl;
+	cerr << message << endl;
+	return 1;
       }
 
       if (param->count(GAU_PRM) == 0) {

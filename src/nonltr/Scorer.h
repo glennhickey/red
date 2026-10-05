@@ -48,6 +48,10 @@ public:
 	void takeLog(double);
 	int countLessOrEqual(int);
 	int getMax();
+
+	// False for a sequence with nothing to score: empty, all N, or no run of bases long enough to make a
+	// segment.  Constructing a Scorer on one throws, so callers skip such sequences first.
+	static bool hasScorableSegment(Chromosome *);
 };
 }
 

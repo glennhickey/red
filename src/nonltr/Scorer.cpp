@@ -184,17 +184,23 @@ int Scorer::countLessOrEqual(int thr) {
  * maximum itself is computed on demand.
  */
 void Scorer::checkNotEmpty() {
+	if (hasScorableSegment(chrom)) {
+		return;
+	}
+	string msg("Error occurred while finding the maximum score.");
+	throw InvalidStateException(msg);
+}
+
+bool Scorer::hasScorableSegment(Chromosome * chrom) {
 	const vector<vector<int> *> * segmentList = chrom->getSegment();
 	int segmentCount = segmentList->size();
 	for (int jj = 0; jj < segmentCount; jj++) {
 		vector<int> * segment = segmentList->at(jj);
 		if (segment->at(1) >= segment->at(0)) {
-			return;
+			return true;
 		}
 	}
-
-	string msg("Error occurred while finding the maximum score.");
-	throw InvalidStateException(msg);
+	return false;
 }
 
 int Scorer::getMax() {

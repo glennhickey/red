@@ -64,6 +64,9 @@ public:
 	void releaseScores();
 	void printIndex(string, bool, int);
 	void printMasked(string, Chromosome&, bool);
+	// The same outputs for a given region list, for records Red does not scan (see RepeatsDetector)
+	static void printMaskedRegions(string, Chromosome&, const vector<ILocation *> *, bool);
+	static void printIndexRegions(string, const string&, const vector<ILocation *> *, bool, int);
 	void mergeWithOtherRegions(const vector<ILocation *> *);
 	const vector<ILocation*>* getRegionList();
 	static void findCapRegions(ChromosomeOneDigit *, int,

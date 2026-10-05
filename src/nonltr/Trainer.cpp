@@ -117,8 +117,18 @@ void Trainer::stage2() {
 		ChromListMaker maker(fileList->at(i));
 
 		while (maker.nextSequence(header, seq, hadSequence)) {
+			// An empty record, or one with nothing to score (all N, or no run of
+			// bases long enough for a segment), has nothing to learn from and would
+			// make the Scorer throw.  The scan writes such records out unmasked.
+			if (!hadSequence) {
+				continue;
+			}
 			ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(
 					header, seq, hadSequence);
+			if (!Scorer::hasScorableSegment(chrom)) {
+				delete chrom;
+				continue;
+			}
 			Scorer * scorer = new Scorer(chrom, table);
 
 			effectiveSize += chrom->getEffectiveSize();
@@ -207,12 +217,21 @@ void Trainer::stage3() {
 		string header;
 		string seq;
 		bool hadSequence = false;
-		int h = -1;
+		// whether this file's candidates have been written yet; skipped records
+		// mean that is no longer the same as being past the first record
+		bool printedCandidates = false;
 
 		while (maker.nextSequence(header, seq, hadSequence)) {
-			h++;
+			// skipped for the same reason as in stage 2
+			if (!hadSequence) {
+				continue;
+			}
 			ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(
 					header, seq, hadSequence);
+			if (!Scorer::hasScorableSegment(chrom)) {
+				delete chrom;
+				continue;
+			}
 			Scorer * scorer = new Scorer(chrom, table);
 			vector<int> * scoreList = scorer->getScores();
 
@@ -223,12 +242,13 @@ void Trainer::stage3() {
 			if (isCND) {
 				if (canPrintCandidates) {
 					detector = new ChromDetectorMaxima(s, 10, 0, tDetector, p,s, scoreList, chrom);
-					if (h > 0) {
+					if (printedCandidates) {
 						bool canAppend = true;
 						detector->printIndex(cndFile, canAppend);
 					} else {
 						cout << "Printing candidates to: " << cndFile << endl;
 						detector->printIndex(cndFile);
+						printedCandidates = true;
 					}
 				} else {
 					detector = new ChromDetectorMaxima(s, 10, 0, tDetector, p, s, scoreList, chrom->getSegment());
