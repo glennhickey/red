@@ -40,10 +40,11 @@ OChromDetectorMaxima =  ../bin/nonltr/ChromDetectorMaxima.o
 OHMM = ../bin/nonltr/HMM.o
 OScanner = ../bin/nonltr/Scanner.o
 OTrainer = ../bin/nonltr/Trainer.o
+OSketchMasker = ../bin/nonltr/SketchMasker.o
 OLocationList = ../bin/nonltr/LocationList.o
 OLocationListCollection = ../bin/nonltr/LocationListCollection.o
 
-OBJS = $(ORed) $(OInvalidInputException) $(OInvalidStateException) $(OFileDoesNotExistException) $(OInvalidOrderOfOperationsException) $(OInvalidOperationException) $(OInvalidScoreException) $(OUtil) $(OLocation) $(OEmptyLocation) $(OChromosome) $(OChromosomeOneDigit) $(OChromosomeRandom) $(OChromListMaker) $(OTableBuilder) $(OScorer) $(ODetectorMaxima) $(OChromDetector) $(OChromDetectorMaxima) $(OHMM) $(OScanner) $(OTrainer) $(OLocationList) $(OLocationListCollection)
+OBJS = $(ORed) $(OInvalidInputException) $(OInvalidStateException) $(OFileDoesNotExistException) $(OInvalidOrderOfOperationsException) $(OInvalidOperationException) $(OInvalidScoreException) $(OUtil) $(OLocation) $(OEmptyLocation) $(OChromosome) $(OChromosomeOneDigit) $(OChromosomeRandom) $(OChromListMaker) $(OTableBuilder) $(OScorer) $(ODetectorMaxima) $(OChromDetector) $(OChromDetectorMaxima) $(OHMM) $(OScanner) $(OTrainer) $(OSketchMasker) $(OLocationList) $(OLocationListCollection)
 
 #
 # Target
@@ -62,7 +63,7 @@ $(TRed): $(OBJS)
 # RepeatsDetector
 #
 
-$(ORed): RepeatsDetector.cpp nonltr/KmerHashTable.h nonltr/KmerHashTable.cpp nonltr/TableBuilder.h nonltr/HMM.h nonltr/Scanner.h nonltr/Trainer.h utility/Util.h
+$(ORed): RepeatsDetector.cpp nonltr/KmerHashTable.h nonltr/KmerHashTable.cpp nonltr/TableBuilder.h nonltr/HMM.h nonltr/Scanner.h nonltr/Trainer.h nonltr/Scorer.h nonltr/SketchMasker.h utility/Util.h
 	$(CXX) $(CXXFLAGS) -c RepeatsDetector.cpp -o $(ORed) 
 
 #
@@ -132,6 +133,9 @@ $(OScanner): nonltr/Scanner.cpp nonltr/Scanner.h nonltr/Chromosome.h nonltr/Chro
 
 $(OTrainer): nonltr/Trainer.cpp nonltr/Trainer.h nonltr/TableBuilder.h nonltr/KmerHashTable.h nonltr/KmerHashTable.cpp nonltr/HMM.h nonltr/ChromDetectorMaxima.h nonltr/Scorer.h nonltr/ChromListMaker.h utility/Util.h nonltr/LocationListCollection.h
 	$(CXX) $(CXXFLAGS) -c nonltr/Trainer.cpp -o $(OTrainer)
+
+$(OSketchMasker): nonltr/SketchMasker.cpp nonltr/SketchMasker.h nonltr/ChromListMaker.h utility/ILocation.h utility/Location.h exception/InvalidStateException.h
+	$(CXX) $(CXXFLAGS) -c nonltr/SketchMasker.cpp -o $(OSketchMasker)
 
 $(OChromListMaker): nonltr/ChromListMaker.cpp nonltr/ChromListMaker.h nonltr/Chromosome.h nonltr/ChromosomeOneDigit.h utility/Util.h
 	$(CXX) $(CXXFLAGS) -c nonltr/ChromListMaker.cpp -o $(OChromListMaker) 

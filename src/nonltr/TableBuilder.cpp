@@ -45,6 +45,10 @@ void TableBuilder::buildTable() {
 		ChromListMaker maker(fileList->at(i));
 
 		while (maker.nextSequence(header, seq, hadSequence)) {
+			// an empty record cannot be made into a chromosome, and has no k-mers
+			if (!hadSequence) {
+				continue;
+			}
 			ChromosomeOneDigit * chrom = ChromListMaker::makeChromOneDigit(
 					header, seq, hadSequence);
 			genomeLength += chrom->getEffectiveSize();

@@ -377,6 +377,11 @@ void Scanner::printScores(string outputFile, bool canAppend) {
 }
 
 void Scanner::printIndex(string outputFile, bool canAppend, int frmt) {
+	printIndexRegions(outputFile, chrom->getHeader(), regionList, canAppend, frmt);
+}
+
+void Scanner::printIndexRegions(string outputFile, const string & header,
+		const vector<ILocation *> * regionList, bool canAppend, int frmt) {
 
 	if(frmt != FRMT_POS && frmt != FRMT_BED){
 		string msg("Unknown output format: ");
@@ -399,7 +404,6 @@ void Scanner::printIndex(string outputFile, bool canAppend, int frmt) {
 	Util::checkStream(outIndex, outputFile, "open");
 
 	// Write the index of the repeat segment [x,y[
-	string header = chrom->getHeader();
 
 	// "\n" rather than endl: endl flushes, and flushing once per region turns
 	// a few large writes into one syscall per line.  The stream is still
@@ -441,6 +445,11 @@ static const char * const LOWER_TABLE = makeLowerTable();
 
 void Scanner::printMasked(string outputFile, Chromosome& oChrom,
 		bool canAppend) {
+	printMaskedRegions(outputFile, oChrom, regionList, canAppend);
+}
+
+void Scanner::printMaskedRegions(string outputFile, Chromosome& oChrom,
+		const vector<ILocation *> * regionList, bool canAppend) {
 
 	ofstream outMask;
 
