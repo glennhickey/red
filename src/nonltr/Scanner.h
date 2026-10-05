@@ -66,6 +66,8 @@ public:
 	void printMasked(string, Chromosome&, bool);
 	void mergeWithOtherRegions(const vector<ILocation *> *);
 	const vector<ILocation*>* getRegionList();
+	static void findCapRegions(ChromosomeOneDigit *, int,
+			const vector<unsigned long> &, vector<ILocation *> *);
 };
 
 } /* namespace nonltr */

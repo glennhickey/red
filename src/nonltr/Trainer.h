@@ -55,6 +55,8 @@ private:
 	int isCON;
 	// The minimum number of the observed k-mers
 	const int minObs;
+	// Percentile for the count cap (-cap), 0 when there is none; see TableBuilder
+	const double capPct;
 
 	void stage1();
 	void stage2();
@@ -62,9 +64,9 @@ private:
 	//void stage4();
 
 public:
-	Trainer(string, int, int, double, double, string, int);
+	Trainer(string, int, int, double, double, string, int, double capPct = 0.0);
 	Trainer(string, int, int, double, double, string, bool, string, int);
-	Trainer(string, int, int, double, double, int);
+	Trainer(string, int, int, double, double, int, double capPct = 0.0);
 	Trainer(string, int, int, double, double, bool, string, int);
 
 	void initialize(string, int, int, double, double);
@@ -73,6 +75,7 @@ public:
 	void printHmm(string);
 	HMM*& getHmm();
 	KmerHashTable<unsigned long, int> * getTable();
+	const TableBuilder * getBuilder() const;
 
 };
 

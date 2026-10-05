@@ -37,6 +37,7 @@ const static string ORD_PRM = string("-ord"); // order of background markov chai
 const static string GAU_PRM = string("-gau"); // Half width of the Gaussian mask.
 const static string THR_PRM = string("-thr"); // The threshold part of the definition of non-repeats
 const static string MIN_PRM = string("-min"); // The minimum number of observations
+const static string CAP_PRM = string("-cap"); // Also mask k-mers counted above this percentile
 
 // Scan using pre-calculated scores and a trained HMM
 const static string HMI_PRM = string("-hmi"); // File including the trained model
@@ -104,7 +105,8 @@ void drive(map<string, string> * const param) {
     double s = atoi(param->at(GAU_PRM).c_str());
     double t = atoi(param->at(THR_PRM).c_str());
     int minObs = atoi(param->at(MIN_PRM).c_str());
-    
+    double capPct = param->count(CAP_PRM) > 0 ? atof(param->at(CAP_PRM).c_str()) : 0.0;
+
     // Adjust the threshold when it is one because of the log base.
     if (((int) t) == 1) {
       t = 1.5;
@@ -115,10 +117,11 @@ void drive(map<string, string> * const param) {
     // This part or the next
     Trainer * trainer;
     if (param->count(CND_PRM) > 0) {
-      trainer = new Trainer(genomeDir, order, k, s, t, param->at(CND_PRM), minObs);
+      trainer = new Trainer(genomeDir, order, k, s, t, param->at(CND_PRM), minObs, capPct);
     } else {
-      trainer = new Trainer(genomeDir, order, k, s, t, minObs);
+      trainer = new Trainer(genomeDir, order, k, s, t, minObs, capPct);
     }
+    const bool hasCap = trainer->getBuilder()->hasCap();
     
     
     if (param->count(TBL_PRM)) {
@@ -179,6 +182,14 @@ void drive(map<string, string> * const param) {
 	// regions are out, and this Scanner outlives the other two strands.
 	Scanner * scanner = new Scanner(trainer->getHmm(), k, chrom,trainer->getTable());
 	scanner->releaseScores();
+
+	// The count cap's regions, found while the chromosome is still the forward
+	// strand and merged in once the other strands have been.
+	vector<ILocation *> capRegions;
+	if (hasCap) {
+	  Scanner::findCapRegions(chrom, k, trainer->getBuilder()->getHighKmers(),
+				  &capRegions);
+	}
 	
 	// Scan the reverse complement
 	chrom->makeRC();
@@ -195,6 +206,12 @@ void drive(map<string, string> * const param) {
 	scannerR->makeForwardCoordinates();
 	scanner->mergeWithOtherRegions(scannerR->getRegionList());
 	delete scannerR;
+
+	if (hasCap) {
+	  // mergeWithOtherRegions copies what it is given
+	  scanner->mergeWithOtherRegions(&capRegions);
+	  Util::deleteInVector(&capRegions);
+	}
 
 	//@@ The chromosome now has the sequence of the reverse strand
 	// The actual strand is calculated if the user requested the scores.
@@ -297,6 +314,8 @@ int main(int argc, char * argv[]) {
 
   message.append("\t-thr the threshold score of the low adjusted scores of non-repeats. The default is 2.\n");
   message.append("\t-min the minimum number of the observed k-mers. The default is 3.\n");
+  message.append("\t-cap also mask every k-mer whose count, both strands pooled, is above this percentile\n");
+  message.append("\t\tof the counts of the distinct k-mers in the genome, e.g. 99.8.  Optional; off by default.\n");
   message.append("\t-tbl file where the table of the adjusted counts is written, optional.\n");
   message.append("\t-sco directory where scores are saved, optional.\n");
   message.append("\t\tScore files have the \".scr\" extension.\n");
@@ -337,6 +356,7 @@ int main(int argc, char * argv[]) {
   validParam.insert(map<string, string>::value_type(CND_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(DIR_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(MIN_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(CAP_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(FRM_PRM, "DUMMY"));
 
   // Make a table of the user provided arguments
@@ -482,6 +502,16 @@ int main(int argc, char * argv[]) {
 	}
       }
       
+      if (param->count(CAP_PRM) > 0) {
+	double capPct = atof(param->at(CAP_PRM).c_str());
+	if (capPct <= 0 || capPct >= 100) {
+	  cerr << "The count cap is a percentile and must be above 0 and below 100.";
+	  cerr << endl;
+	  cerr << message << endl;
+	  return 1;
+	}
+      }
+
       if (param->count(GAU_PRM) == 0) {
 	// 1: The counts come from the single measurement pass above.
 

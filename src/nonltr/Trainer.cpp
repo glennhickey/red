@@ -12,7 +12,8 @@ namespace nonltr {
 // Pass the isCND and the isCON parameters
 
 Trainer::Trainer(string genomeDirIn, int orderIn, int kIn, double sIn,
-		double tIn, string candidateDirIn, int m) : minObs(m) {
+		double tIn, string candidateDirIn, int m, double capPctIn)
+		: minObs(m), capPct(capPctIn) {
 	candidateDir = candidateDirIn;
 	canPrintCandidates = true;
 	isCND = true;
@@ -21,7 +22,8 @@ Trainer::Trainer(string genomeDirIn, int orderIn, int kIn, double sIn,
 }
 
 Trainer::Trainer(string genomeDirIn, int orderIn, int kIn, double sIn,
-		double tIn, string candidateDirIn, bool isCNDIn, string otherDirIn, int m) : minObs(m) {
+		double tIn, string candidateDirIn, bool isCNDIn, string otherDirIn, int m)
+		: minObs(m), capPct(0.0) {
 	candidateDir = candidateDirIn;
 	canPrintCandidates = true;
 	isCND = isCNDIn;
@@ -31,7 +33,7 @@ Trainer::Trainer(string genomeDirIn, int orderIn, int kIn, double sIn,
 }
 
 Trainer::Trainer(string genomeDirIn, int orderIn, int kIn, double sIn,
-		double tIn, int m) : minObs(m) {
+		double tIn, int m, double capPctIn) : minObs(m), capPct(capPctIn) {
 	canPrintCandidates = false;
 	isCND = true;
 	isCON = false;
@@ -39,7 +41,8 @@ Trainer::Trainer(string genomeDirIn, int orderIn, int kIn, double sIn,
 }
 
 Trainer::Trainer(string genomeDirIn, int orderIn, int kIn, double sIn,
-		double tIn, bool isCNDIn, string otherDirIn, int m) : minObs(m) {
+		double tIn, bool isCNDIn, string otherDirIn, int m)
+		: minObs(m), capPct(0.0) {
 	canPrintCandidates = false;
 	isCND = isCNDIn;
 	isCON = true;
@@ -90,7 +93,7 @@ Trainer::~Trainer() {
 void Trainer::stage1() {
 	cout << endl << endl;
 	cout << "Stage 1: Building the table ..." << endl;
-	builder = new TableBuilder(genomeDir, k, order, minObs);
+	builder = new TableBuilder(genomeDir, k, order, minObs, capPct);
 	table = builder->getKmerTable();
 	genomeLength = builder->getGenomeLength();
 	max = builder->getMaxValue();
@@ -285,6 +288,10 @@ HMM*& Trainer::getHmm() {
 
 KmerHashTable<unsigned long, int> * Trainer::getTable() {
 	return table;
+}
+
+const TableBuilder * Trainer::getBuilder() const {
+	return builder;
 }
 
 void Trainer::printHmm(string fileName) {

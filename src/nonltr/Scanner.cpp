@@ -275,6 +275,51 @@ void Scanner::mergeWithOtherRegions(const vector<ILocation *> * otherList) {
 	}
 }
 
+/**
+ * Regions covered by the k-mers flagged in highKmers (see TableBuilder's count
+ * cap), appended to outList sorted and with overlapping or touching k-mers
+ * coalesced.  chrom must be on its forward strand and encoded, since the keys are
+ * computed from its bases as the table computes them: first base most significant.
+ * The caller owns the Locations.
+ */
+void Scanner::findCapRegions(ChromosomeOneDigit * chrom, int k,
+		const vector<unsigned long> & highKmers, vector<ILocation *> * outList) {
+	const char * b = chrom->getBase()->c_str();
+	const vector<vector<int> *> * segments = chrom->getSegment();
+	const unsigned long keyMask = (1UL << (2 * k)) - 1;
+
+	int runStart = -1;
+	int runEnd = -1;
+	for (int s = 0; s < segments->size(); s++) {
+		int segStart = segments->at(s)->at(0);
+		int segEnd = segments->at(s)->at(1);
+		if (segEnd - segStart + 1 < k) {
+			continue;
+		}
+		unsigned long key = 0;
+		for (int i = segStart; i < segStart + k - 1; i++) {
+			key = (key << 2) | (unsigned long) b[i];
+		}
+		for (int i = segStart; i + k - 1 <= segEnd; i++) {
+			key = ((key << 2) | (unsigned long) b[i + k - 1]) & keyMask;
+			if ((highKmers[key >> 6] >> (key & 63)) & 1UL) {
+				if (runStart >= 0 && i <= runEnd + 1) {
+					runEnd = i + k - 1;
+				} else {
+					if (runStart >= 0) {
+						outList->push_back(new Location(runStart, runEnd));
+					}
+					runStart = i;
+					runEnd = i + k - 1;
+				}
+			}
+		}
+	}
+	if (runStart >= 0) {
+		outList->push_back(new Location(runStart, runEnd));
+	}
+}
+
 void Scanner::makeForwardCoordinates() {
 	int regionNum = regionList->size();
 	int lastBase = chrom->size() - 1;
