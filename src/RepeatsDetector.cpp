@@ -41,6 +41,7 @@ const static string THR_PRM = string("-thr"); // The threshold part of the defin
 const static string MIN_PRM = string("-min"); // The minimum number of observations
 const static string CAP_PRM = string("-cap"); // Also mask k-mers counted above this percentile
 const static string SKT_PRM = string("-sketch"); // 1: also mask seeds that are high-copy across the genome
+const static string MCP_PRM = string("-mincopy"); // Unmask HMM repeats present in fewer copies than this
 // Set by main, never by the user: no record has anything Red can score, so there is nothing to train on
 const static string NOS_PRM = string("--no-scorable-sequence");
 
@@ -124,6 +125,9 @@ void drive(map<string, string> * const param) {
     double t = atoi(param->at(THR_PRM).c_str());
     int minObs = atoi(param->at(MIN_PRM).c_str());
     double capPct = param->count(CAP_PRM) > 0 ? atof(param->at(CAP_PRM).c_str()) : 0.0;
+    const int minCopy = param->count(MCP_PRM) > 0 ? atoi(param->at(MCP_PRM).c_str()) : 0;
+    vector<long> bpByCopy(Scanner::COPY_BINS, 0);
+    long lowCopyBp = 0;
 
     // Adjust the threshold when it is one because of the log base.
     if (((int) t) == 1) {
@@ -281,6 +285,13 @@ void drive(map<string, string> * const param) {
 	scanner->mergeWithOtherRegions(scannerR->getRegionList());
 	delete scannerR;
 
+	// Before the count cap and the sketch are merged in: what they mask is high-copy by construction.
+	if (minCopy > 0) {
+	  chrom->makeR();
+	  lowCopyBp += scanner->dropLowCopyRegions(minCopy, trainer->getTable()->getValues(), bpByCopy);
+	  chrom->makeR();
+	}
+
 	if (hasCap) {
 	  // mergeWithOtherRegions copies what it is given
 	  scanner->mergeWithOtherRegions(&capRegions);
@@ -333,6 +344,21 @@ void drive(map<string, string> * const param) {
       }
     }
     
+    if (minCopy > 0) {
+      long total = 0;
+      for (int b = 0; b < Scanner::COPY_BINS; b++) {
+	total += bpByCopy[b];
+      }
+      cout << "Repeats by median copy number (bp):";
+      for (int b = 0; b < Scanner::COPY_BINS; b++) {
+	int lo = b == 0 ? 0 : 1 << (b - 1);
+	cout << " " << lo << (b == Scanner::COPY_BINS - 1 ? "+" : "") << ":" << bpByCopy[b];
+      }
+      cout << endl;
+      cout << "Min copy: " << lowCopyBp << " of the " << total << " bp of repeats are in fewer than "
+	   << minCopy << " copies and are left unmasked." << endl;
+    }
+
     // Free memory
     fileList->clear();
     delete fileList;
@@ -396,6 +422,8 @@ int main(int argc, char * argv[]) {
   message.append("\t\tof the counts of the distinct k-mers in the genome, e.g. 99.8.  Optional; off by default.\n");
   message.append("\t-sketch 1 also masks sequence whose 16-mers or 32-base purine/pyrimidine patterns are high-copy\n");
   message.append("\t\tacross the genome, from count sketches.  Thresholds scale with genome size.  0 (default) or 1.\n");
+  message.append("\t-mincopy leave unmasked any repeat the HMM finds whose k-mers are present in fewer than\n");
+  message.append("\t\tthis many copies (the median over its k-mers, both strands, less the background).  0 (default) is off.\n");
   message.append("\t-tbl file where the table of the adjusted counts is written, optional.\n");
   message.append("\t-sco directory where scores are saved, optional.\n");
   message.append("\t\tScore files have the \".scr\" extension.\n");
@@ -438,6 +466,7 @@ int main(int argc, char * argv[]) {
   validParam.insert(map<string, string>::value_type(MIN_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(CAP_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(SKT_PRM, "DUMMY"));
+  validParam.insert(map<string, string>::value_type(MCP_PRM, "DUMMY"));
   validParam.insert(map<string, string>::value_type(FRM_PRM, "DUMMY"));
 
   // Make a table of the user provided arguments
@@ -601,6 +630,13 @@ int main(int argc, char * argv[]) {
 	  cerr << message << endl;
 	  return 1;
 	}
+      }
+
+      if (param->count(MCP_PRM) > 0 && atoi(param->at(MCP_PRM).c_str()) < 0) {
+	cerr << "The minimum copy number cannot be less than 0.";
+	cerr << endl;
+	cerr << message << endl;
+	return 1;
       }
 
       if (param->count(SKT_PRM) > 0 && param->at(SKT_PRM) != "0" && param->at(SKT_PRM) != "1") {

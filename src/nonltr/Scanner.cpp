@@ -6,6 +6,9 @@
  */
 #include "Scanner.h"
 
+#include <algorithm>
+#include <climits>
+
 namespace nonltr {
 
 Scanner::Scanner(HMM * hmmIn, int kIn, ChromosomeOneDigit * chromIn,
@@ -318,6 +321,95 @@ void Scanner::findCapRegions(ChromosomeOneDigit * chrom, int k,
 	if (runStart >= 0) {
 		outList->push_back(new Location(runStart, runEnd));
 	}
+}
+
+/**
+ * Unmask the regions whose sequence is present in fewer than minCopy copies.
+ *
+ * A region's copy number is the median, over the k-mers that start in it, of the
+ * table's value for the k-mer plus the value for its reverse complement.  The
+ * table holds adjusted counts -- the count less the count a background Markov
+ * model expects, or zero below -min -- so a k-mer of a sequence present n times
+ * over has a value of about n, and a k-mer of unique sequence about zero.
+ *
+ * Red's HMM labels sequence whose k-mers are merely enriched, and with k set to
+ * log4 of the genome size, a k-mer of a 3- or 4-copy tandem array or segmental
+ * duplication is.  Those are real repeats, but a seeding aligner gets only a few
+ * hits from each of their k-mers, so masking them saves almost no work, and it
+ * removes every anchor from exactly the sequence whose paralogy the alignment has
+ * to resolve.
+ *
+ * chrom must be on its forward strand.  bpByCopy (COPY_BINS long) gets the bases
+ * of every region added to the bin of its median, dropped or not.  Regions with no
+ * k-mer inside a segment are kept.  Returns the bases unmasked.
+ */
+long Scanner::dropLowCopyRegions(int minCopy, const int * values, vector<long> & bpByCopy) {
+	const char * b = chrom->getBase()->c_str();
+	const vector<vector<int> *> * segments = chrom->getSegment();
+	const int segCount = segments->size();
+	const unsigned long keyMask = (1UL << (2 * k)) - 1;
+	const int shift = 2 * (k - 1);
+	const int regionCount = regionList->size();
+
+	vector<char> drop(regionCount, 0);
+	vector<int> vals;
+	long dropped = 0;
+	int s = 0;
+	for (int r = 0; r < regionCount; r++) {
+		const int rs = regionList->at(r)->getStart();
+		const int re = regionList->at(r)->getEnd();
+		vals.clear();
+		while (s < segCount && segments->at(s)->at(1) < rs) {
+			s++;
+		}
+		for (int t = s; t < segCount && segments->at(t)->at(0) <= re; t++) {
+			const int a = max(rs, segments->at(t)->at(0));
+			const int last = min(re, segments->at(t)->at(1) - k + 1);
+			if (last < a) {
+				continue;
+			}
+			unsigned long fwd = 0;
+			unsigned long rc = 0;
+			for (int i = a; i < a + k - 1; i++) {
+				const unsigned long c = (unsigned long) b[i];
+				fwd = (fwd << 2) | c;
+				rc = (rc >> 2) | ((3UL - c) << shift);
+			}
+			for (int i = a; i <= last; i++) {
+				const unsigned long c = (unsigned long) b[i + k - 1];
+				fwd = ((fwd << 2) | c) & keyMask;
+				rc = (rc >> 2) | ((3UL - c) << shift);
+				long v = (long) values[fwd] + (rc == fwd ? 0L : (long) values[rc]);
+				vals.push_back(v < INT_MAX ? (int) v : INT_MAX);
+			}
+		}
+		if (vals.empty()) {
+			continue;
+		}
+		nth_element(vals.begin(), vals.begin() + vals.size() / 2, vals.end());
+		const int median = vals[vals.size() / 2];
+		int bin = 0;
+		for (int m = median; m > 0 && bin < COPY_BINS - 1; m >>= 1) {
+			bin++;
+		}
+		const long len = (long) re - rs + 1;
+		bpByCopy[bin] += len;
+		if (median < minCopy) {
+			drop[r] = 1;
+			dropped += len;
+		}
+	}
+
+	int kept = 0;
+	for (int r = 0; r < regionCount; r++) {
+		if (drop[r]) {
+			delete regionList->at(r);
+		} else {
+			regionList->at(kept++) = regionList->at(r);
+		}
+	}
+	regionList->resize(kept);
+	return dropped;
 }
 
 void Scanner::makeForwardCoordinates() {
