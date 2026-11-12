@@ -71,6 +71,9 @@ public:
 	const vector<ILocation*>* getRegionList();
 	static void findCapRegions(ChromosomeOneDigit *, int,
 			const vector<unsigned long> &, vector<ILocation *> *);
+	// Bins of a region's median copy number: 0, 1, 2-3, 4-7, ..., 128-255, 256 and up.
+	static const int COPY_BINS = 10;
+	long dropLowCopyRegions(int, const int *, vector<long> &);
 };
 
 } /* namespace nonltr */
